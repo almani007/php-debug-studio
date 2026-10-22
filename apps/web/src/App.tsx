@@ -31,6 +31,23 @@ export function App() {
   const [purgeResult, setPurgeResult] = useState<any>(null);
   const [purgeLoading, setPurgeLoading] = useState<boolean>(false);
 
+  // Webhook Studio state (Module 22)
+  const [webhookEvents, setWebhookEvents] = useState<any[]>([]);
+  const [webhookReceiverId, setWebhookReceiverId] = useState<string>('test-receiver');
+  const [webhookLoading, setWebhookLoading] = useState<boolean>(false);
+  const [selectedWebhook, setSelectedWebhook] = useState<any | null>(null);
+  const [simProvider, setSimProvider] = useState<'stripe' | 'github' | 'shopify'>('stripe');
+  const [simSecret, setSimSecret] = useState<string>('whsec_sample_secret_key');
+  const [simulating, setSimulating] = useState<boolean>(false);
+  const [verifySecret, setVerifySecret] = useState<string>('whsec_sample_secret_key');
+  const [verifyPayload, setVerifyPayload] = useState<string>('{"event":"test"}');
+  const [verifySignature, setVerifySignature] = useState<string>('');
+  const [verifyResult, setVerifyResult] = useState<{ valid: boolean } | null>(null);
+  const [verifying, setVerifying] = useState<boolean>(false);
+  const [replayTargetUrl, setReplayTargetUrl] = useState<string>('http://127.0.0.1:8000/api/webhooks');
+  const [replayStatus, setReplayStatus] = useState<string | null>(null);
+  const [replaying, setReplaying] = useState<boolean>(false);
+
   // Cookie Jar state
   const [cookies, setCookies] = useState<any[]>([]);
   const [showCookieJar, setShowCookieJar] = useState<boolean>(false);
@@ -161,6 +178,8 @@ export function App() {
     } else if (activeTab === 'xdebug') {
       loadDebugSessions();
       loadBreakpoints();
+    } else if (activeTab === 'webhooks') {
+      loadWebhookEvents();
     } else if (activeTab === 'streams') {
       const ws = new WebSocket('ws://127.0.0.1:8765/v1/events/stream');
       ws.onopen = () => setStreamConnected(true);
@@ -482,6 +501,115 @@ export function App() {
     } finally {
       setPurgeLoading(false);
     }
+  };
+
+  const loadWebhookEvents = () => {
+    setWebhookLoading(true);
+    api.getWebhookEvents(webhookReceiverId)
+      .then((data) => {
+        setWebhookEvents(data || []);
+        if (data && data.length > 0 && !selectedWebhook) {
+          setSelectedWebhook(data[0]);
+        }
+      })
+      .catch(() => setWebhookEvents([]))
+      .finally(() => setWebhookLoading(false));
+  };
+
+  const handleSimulateWebhook = async () => {
+    setSimulating(true);
+    try {
+      const sim = await api.simulateWebhook({ provider: simProvider, secret: simSecret });
+      if (!sim) throw new Error('Failed to generate simulation payload');
+
+      const endpoint = `http://127.0.0.1:8765/wh/${webhookReceiverId}`;
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: sim.headers || { 'Content-Type': 'application/json' },
+        body: sim.raw_payload,
+      });
+
+      if (!res.ok) {
+        throw new Error(`Receiver responded with HTTP ${res.status}`);
+      }
+
+      loadWebhookEvents();
+    } catch (err: any) {
+      alert(`Simulation failed: ${err.message}`);
+    } finally {
+      setSimulating(false);
+    }
+  };
+
+  const handleVerifySignature = async () => {
+    if (!verifySecret || !verifyPayload || !verifySignature) {
+      alert('Please provide secret, payload, and signature.');
+      return;
+    }
+    setVerifying(true);
+    try {
+      const res = await api.verifyWebhookSignature({
+        secret: verifySecret,
+        payload: verifyPayload,
+        signature: verifySignature,
+      });
+      setVerifyResult(res);
+    } catch (err: any) {
+      alert(`Verification error: ${err.message}`);
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const handleReplayWebhook = async (event: any) => {
+    if (!replayTargetUrl) {
+      alert('Please enter a target URL for replay.');
+      return;
+    }
+    setReplaying(true);
+    setReplayStatus(null);
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      try {
+        const parsed = JSON.parse(event.headers_json);
+        for (const [k, v] of Object.entries(parsed)) {
+          if (Array.isArray(v) && v.length > 0) {
+            headers[k] = v[0] as string;
+          } else if (typeof v === 'string') {
+            headers[k] = v;
+          }
+        }
+      } catch {
+        // ignore header parsing error
+      }
+
+      const startTime = performance.now();
+      const res = await api.executeRequest({
+        method: event.method || 'POST',
+        url: replayTargetUrl,
+        headers,
+        body: event.body,
+      });
+      const duration = Math.round(performance.now() - startTime);
+      setReplayStatus(`Replay dispatched! HTTP ${res.status_code || 200} (${duration}ms)`);
+    } catch (err: any) {
+      setReplayStatus(`Replay failed: ${err.message}`);
+    } finally {
+      setReplaying(false);
+    }
+  };
+
+  const handleLoadIntoVerifier = (event: any) => {
+    setVerifyPayload(event.body || '');
+    let sig = '';
+    try {
+      const headers = JSON.parse(event.headers_json || '{}');
+      sig = headers['Stripe-Signature']?.[0] || headers['X-Hub-Signature-256']?.[0] || headers['X-Shopify-Hmac-Sha256']?.[0] || '';
+    } catch {
+      sig = '';
+    }
+    setVerifySignature(sig);
+    setVerifyResult(null);
   };
 
   // Keyboard Shortcuts & WCAG 2.1 AA Navigation
@@ -2735,19 +2863,569 @@ export function App() {
           )}
 
           {activeTab === 'webhooks' && (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '12px' }}>
-              <h2 style={{ fontSize: '16px', fontWeight: 600 }}>Webhook Studio (Module 22)</h2>
-              <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                Local loopback receiver for inspecting, verifying signatures (HMAC SHA-256), and replaying webhooks.
-              </p>
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '14px', overflow: 'hidden' }}>
+              {/* Header and Receiver URL Bar */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
+                <div>
+                  <h2 style={{ fontSize: '16px', fontWeight: 600 }}>Webhook Studio & Inbound Dispatcher (Module 22)</h2>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Local loopback receiver, real-time payload inspector, HMAC SHA-256 signature verifier, and local replay executor.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <button
+                    onClick={loadWebhookEvents}
+                    disabled={webhookLoading}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: 'var(--bg-card)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {webhookLoading ? 'Refreshing...' : '🔄 Refresh Inbox'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Endpoint Banner */}
               <div style={{
-                padding: '12px 16px',
+                padding: '10px 14px',
                 borderRadius: '6px',
                 backgroundColor: 'var(--bg-card)',
                 border: '1px solid var(--border-color)',
-                fontSize: '13px'
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px'
               }}>
-                <div><strong>Incoming Endpoint:</strong> <code>http://127.0.0.1:8765/wh/test-receiver</code></div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', flex: 1 }}>
+                  <span style={{ fontWeight: 600, color: 'var(--text-secondary)', fontSize: '12px' }}>RECEIVER ENDPOINT:</span>
+                  <code style={{
+                    padding: '4px 8px',
+                    borderRadius: '4px',
+                    backgroundColor: 'rgba(0,0,0,0.2)',
+                    color: 'var(--accent)',
+                    fontFamily: 'monospace'
+                  }}>
+                    http://127.0.0.1:8765/wh/{webhookReceiverId}
+                  </code>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input
+                    type="text"
+                    value={webhookReceiverId}
+                    onChange={(e) => setWebhookReceiverId(e.target.value)}
+                    placeholder="receiver-id"
+                    style={{
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      border: '1px solid var(--border-color)',
+                      backgroundColor: 'var(--bg-main)',
+                      color: 'var(--text-primary)',
+                      fontSize: '12px',
+                      width: '130px'
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(`http://127.0.0.1:8765/wh/${webhookReceiverId}`);
+                      alert('Copied receiver URL to clipboard!');
+                    }}
+                    style={{
+                      padding: '5px 10px',
+                      backgroundColor: 'var(--accent)',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '4px',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    📋 Copy URL
+                  </button>
+                </div>
+              </div>
+
+              {/* 3-Column Studio Workspace */}
+              <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr 340px', gap: '12px', flex: 1, minHeight: 0 }}>
+                {/* Panel 1: Inbound Webhook Inbox */}
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  backgroundColor: 'var(--bg-card)',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-color)',
+                  overflow: 'hidden'
+                }}>
+                  <div style={{
+                    padding: '10px 12px',
+                    borderBottom: '1px solid var(--border-color)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    fontSize: '12px',
+                    fontWeight: 600
+                  }}>
+                    <span>INBOUND INBOX ({webhookEvents.length})</span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Loopback Log</span>
+                  </div>
+
+                  <div style={{ flex: 1, overflowY: 'auto', padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {webhookEvents.length === 0 ? (
+                      <div style={{ padding: '24px 12px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '12px' }}>
+                        No webhooks received yet.<br />
+                        Send an event or use the Simulator to test inbound handling.
+                      </div>
+                    ) : (
+                      webhookEvents.map((evt) => {
+                        const isSelected = selectedWebhook?.id === evt.id;
+                        const providerBadgeColor =
+                          evt.provider === 'stripe' ? '#635BFF' :
+                          evt.provider === 'github' ? '#2DA44E' :
+                          evt.provider === 'shopify' ? '#96BF48' : 'var(--text-secondary)';
+
+                        return (
+                          <div
+                            key={evt.id}
+                            onClick={() => setSelectedWebhook(evt)}
+                            style={{
+                              padding: '10px',
+                              borderRadius: '6px',
+                              border: `1px solid ${isSelected ? 'var(--accent)' : 'var(--border-color)'}`,
+                              backgroundColor: isSelected ? 'rgba(88, 166, 255, 0.08)' : 'var(--bg-main)',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '6px'
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                <span style={{
+                                  fontSize: '10px',
+                                  fontWeight: 700,
+                                  padding: '2px 6px',
+                                  borderRadius: '3px',
+                                  backgroundColor: providerBadgeColor,
+                                  color: '#fff',
+                                  textTransform: 'uppercase'
+                                }}>
+                                  {evt.provider || 'GENERIC'}
+                                </span>
+                                <span style={{
+                                  fontSize: '10px',
+                                  fontWeight: 600,
+                                  padding: '2px 6px',
+                                  borderRadius: '3px',
+                                  backgroundColor: evt.signature_status === 'signed' ? 'rgba(63, 185, 80, 0.2)' : 'rgba(210, 153, 34, 0.2)',
+                                  color: evt.signature_status === 'signed' ? 'var(--success)' : 'var(--warning, #d29922)'
+                                }}>
+                                  {evt.signature_status === 'signed' ? 'SIGNED' : 'UNSIGNED'}
+                                </span>
+                              </div>
+                              <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                                {new Date(evt.received_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                              </span>
+                            </div>
+
+                            <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', wordBreak: 'break-all' }}>
+                              {evt.event_type || evt.path}
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-secondary)' }}>
+                              <span>{evt.method} /wh/{evt.receiver_id}</span>
+                              <span title={`SHA-256: ${evt.body_sha256}`}>
+                                {evt.body ? `${evt.body.length} bytes` : '0 bytes'}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                {/* Panel 2: Selected Webhook Detail & Replay */}
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  backgroundColor: 'var(--bg-card)',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-color)',
+                  overflow: 'hidden'
+                }}>
+                  {selectedWebhook ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+                      {/* Event Detail Header */}
+                      <div style={{
+                        padding: '12px 16px',
+                        borderBottom: '1px solid var(--border-color)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '14px', fontWeight: 600 }}>
+                              {selectedWebhook.event_type ? `${selectedWebhook.provider}: ${selectedWebhook.event_type}` : selectedWebhook.path}
+                            </span>
+                            <span style={{
+                              fontSize: '11px',
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              backgroundColor: 'rgba(255,255,255,0.06)',
+                              color: 'var(--text-secondary)'
+                            }}>
+                              ID: {selectedWebhook.id?.substring(0, 8)}...
+                            </span>
+                          </div>
+
+                          <button
+                            onClick={() => handleLoadIntoVerifier(selectedWebhook)}
+                            style={{
+                              padding: '4px 10px',
+                              borderRadius: '4px',
+                              border: '1px solid var(--accent)',
+                              backgroundColor: 'transparent',
+                              color: 'var(--accent)',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            🔍 Load into Verifier
+                          </button>
+                        </div>
+
+                        {/* Replay Controller Bar */}
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          paddingTop: '6px',
+                          borderTop: '1px solid rgba(255,255,255,0.05)'
+                        }}>
+                          <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>REPLAY TARGET:</span>
+                          <input
+                            type="text"
+                            value={replayTargetUrl}
+                            onChange={(e) => setReplayTargetUrl(e.target.value)}
+                            placeholder="http://127.0.0.1:8000/api/webhooks"
+                            style={{
+                              flex: 1,
+                              padding: '4px 8px',
+                              borderRadius: '4px',
+                              border: '1px solid var(--border-color)',
+                              backgroundColor: 'var(--bg-main)',
+                              color: 'var(--text-primary)',
+                              fontSize: '12px'
+                            }}
+                          />
+                          <button
+                            onClick={() => handleReplayWebhook(selectedWebhook)}
+                            disabled={replaying}
+                            style={{
+                              padding: '5px 12px',
+                              backgroundColor: 'var(--accent)',
+                              color: '#fff',
+                              border: 'none',
+                              borderRadius: '4px',
+                              fontSize: '12px',
+                              fontWeight: 600,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            {replaying ? 'Replaying...' : '▶ Replay Webhook'}
+                          </button>
+                        </div>
+
+                        {replayStatus && (
+                          <div style={{
+                            fontSize: '11px',
+                            color: replayStatus.includes('failed') ? 'var(--danger)' : 'var(--success)',
+                            fontWeight: 600,
+                            padding: '4px 8px',
+                            backgroundColor: 'rgba(0,0,0,0.2)',
+                            borderRadius: '4px'
+                          }}>
+                            {replayStatus}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Inspectors (Headers & Body) */}
+                      <div style={{ flex: 1, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                        {/* Headers Inspector */}
+                        <div>
+                          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                            HTTP HEADERS
+                          </div>
+                          <pre style={{
+                            padding: '10px',
+                            borderRadius: '4px',
+                            backgroundColor: 'var(--bg-main)',
+                            border: '1px solid var(--border-color)',
+                            fontSize: '11px',
+                            fontFamily: 'monospace',
+                            margin: 0,
+                            overflow: 'auto',
+                            maxHeight: '140px'
+                          }}>
+                            {(() => {
+                              try {
+                                return JSON.stringify(JSON.parse(selectedWebhook.headers_json), null, 2);
+                              } catch {
+                                return selectedWebhook.headers_json || '{}';
+                              }
+                            })()}
+                          </pre>
+                        </div>
+
+                        {/* Body Payload Inspector */}
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                              PAYLOAD BODY
+                            </span>
+                            <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
+                              SHA-256: {selectedWebhook.body_sha256?.substring(0, 16)}...
+                            </span>
+                          </div>
+                          <pre style={{
+                            flex: 1,
+                            padding: '10px',
+                            borderRadius: '4px',
+                            backgroundColor: 'var(--bg-main)',
+                            border: '1px solid var(--border-color)',
+                            fontSize: '11px',
+                            fontFamily: 'monospace',
+                            margin: 0,
+                            overflow: 'auto',
+                            minHeight: '180px'
+                          }}>
+                            {(() => {
+                              try {
+                                return JSON.stringify(JSON.parse(selectedWebhook.body), null, 2);
+                              } catch {
+                                return selectedWebhook.body || '(Empty Body)';
+                              }
+                            })()}
+                          </pre>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      height: '100%',
+                      color: 'var(--text-secondary)',
+                      fontSize: '13px'
+                    }}>
+                      Select an incoming webhook from the inbox to inspect its headers and payload.
+                    </div>
+                  )}
+                </div>
+
+                {/* Panel 3: Simulator & HMAC Signature Diagnostics */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto' }}>
+                  {/* Simulator Box */}
+                  <div style={{
+                    padding: '12px',
+                    borderRadius: '6px',
+                    backgroundColor: 'var(--bg-card)',
+                    border: '1px solid var(--border-color)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px'
+                  }}>
+                    <div style={{ fontSize: '13px', fontWeight: 600 }}>Webhook Simulator (WH-007)</div>
+                    <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>
+                      Generate valid HMAC-signed webhook payloads and dispatch to loopback receiver.
+                    </p>
+
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                        PROVIDER PRESET
+                      </label>
+                      <select
+                        value={simProvider}
+                        onChange={(e) => setSimProvider(e.target.value as any)}
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: 'var(--bg-main)',
+                          color: 'var(--text-primary)',
+                          fontSize: '12px'
+                        }}
+                      >
+                        <option value="stripe">Stripe (payment_intent.succeeded)</option>
+                        <option value="github">GitHub (push event)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                        SIGNING SECRET KEY
+                      </label>
+                      <input
+                        type="text"
+                        value={simSecret}
+                        onChange={(e) => setSimSecret(e.target.value)}
+                        placeholder="whsec_..."
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: 'var(--bg-main)',
+                          color: 'var(--text-primary)',
+                          fontSize: '12px'
+                        }}
+                      />
+                    </div>
+
+                    <button
+                      onClick={handleSimulateWebhook}
+                      disabled={simulating}
+                      style={{
+                        padding: '8px',
+                        backgroundColor: 'var(--accent)',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {simulating ? 'Dispatching...' : '🚀 Dispatch to Receiver'}
+                    </button>
+                  </div>
+
+                  {/* HMAC Signature Verifier Box */}
+                  <div style={{
+                    padding: '12px',
+                    borderRadius: '6px',
+                    backgroundColor: 'var(--bg-card)',
+                    border: '1px solid var(--border-color)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px'
+                  }}>
+                    <div style={{ fontSize: '13px', fontWeight: 600 }}>HMAC SHA-256 Verifier</div>
+                    <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>
+                      Verify incoming signature integrity against shared secrets with constant-time comparison.
+                    </p>
+
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                        SHARED SECRET
+                      </label>
+                      <input
+                        type="text"
+                        value={verifySecret}
+                        onChange={(e) => setVerifySecret(e.target.value)}
+                        placeholder="whsec_..."
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: 'var(--bg-main)',
+                          color: 'var(--text-primary)',
+                          fontSize: '12px'
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                        SIGNATURE HEADER / HASH
+                      </label>
+                      <input
+                        type="text"
+                        value={verifySignature}
+                        onChange={(e) => setVerifySignature(e.target.value)}
+                        placeholder="t=...,v1=... or sha256=..."
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: 'var(--bg-main)',
+                          color: 'var(--text-primary)',
+                          fontSize: '11px',
+                          fontFamily: 'monospace'
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                        RAW PAYLOAD
+                      </label>
+                      <textarea
+                        value={verifyPayload}
+                        onChange={(e) => setVerifyPayload(e.target.value)}
+                        rows={3}
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: 'var(--bg-main)',
+                          color: 'var(--text-primary)',
+                          fontSize: '11px',
+                          fontFamily: 'monospace',
+                          resize: 'vertical'
+                        }}
+                      />
+                    </div>
+
+                    <button
+                      onClick={handleVerifySignature}
+                      disabled={verifying}
+                      style={{
+                        padding: '8px',
+                        backgroundColor: 'var(--bg-card)',
+                        color: 'var(--text-primary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {verifying ? 'Verifying...' : '🔐 Check Signature'}
+                    </button>
+
+                    {verifyResult !== null && (
+                      <div style={{
+                        padding: '8px',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        textAlign: 'center',
+                        backgroundColor: verifyResult.valid ? 'rgba(63, 185, 80, 0.15)' : 'rgba(248, 81, 73, 0.15)',
+                        color: verifyResult.valid ? 'var(--success)' : 'var(--danger)',
+                        border: `1px solid ${verifyResult.valid ? 'var(--success)' : 'var(--danger)'}`
+                      }}>
+                        {verifyResult.valid ? '✔ VALID SIGNATURE (MATCH)' : '✖ INVALID SIGNATURE (MISMATCH)'}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           )}

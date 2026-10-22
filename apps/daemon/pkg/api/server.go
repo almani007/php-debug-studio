@@ -148,8 +148,10 @@ func (s *Server) registerRoutes() {
 	// Log Explorer & Search (Module 16)
 	s.mux.HandleFunc("/v1/logs", s.handleLogSearch)
 
-	// Webhook Deliveries (Module 22)
+	// Webhook Deliveries & Events (Module 22)
 	s.mux.HandleFunc("/v1/webhooks/deliveries", s.handleWebhookDeliveries)
+	s.mux.HandleFunc("/v1/webhooks/events", s.handleWebhookEvents)
+	s.mux.HandleFunc("/v1/webhooks/verify", s.handleWebhookVerify)
 
 	// Breakpoint Management (Module 10)
 	s.mux.HandleFunc("/v1/debug/breakpoints", s.handleBreakpoints)
@@ -1000,18 +1002,77 @@ func (s *Server) handleIncomingWebhook(w http.ResponseWriter, r *http.Request) {
 	hash := sha256.Sum256(body)
 	bodySha := hex.EncodeToString(hash[:])
 
-	event := map[string]interface{}{
-		"id":          uuid.New().String(),
-		"receiver_id": receiverID,
-		"method":      r.Method,
-		"headers":     r.Header,
-		"body_sha256": bodySha,
-		"received_at": time.Now().UTC().Format(time.RFC3339),
+	headersJSON, _ := json.Marshal(r.Header)
+	provider := "generic"
+	sigStatus := "unsigned"
+
+	if r.Header.Get("Stripe-Signature") != "" {
+		provider = "stripe"
+		sigStatus = "signed"
+	} else if r.Header.Get("X-Hub-Signature-256") != "" {
+		provider = "github"
+		sigStatus = "signed"
+	} else if r.Header.Get("X-Shopify-Hmac-Sha256") != "" {
+		provider = "shopify"
+		sigStatus = "signed"
 	}
 
+	eventID := uuid.New().String()
+	event := store.WebhookEvent{
+		ID:              eventID,
+		ReceiverID:      receiverID,
+		Provider:        provider,
+		EventType:       r.Header.Get("X-GitHub-Event"),
+		Method:          r.Method,
+		Path:            r.URL.Path,
+		HeadersJSON:     string(headersJSON),
+		Body:            string(body),
+		BodySha256:      bodySha,
+		SignatureStatus: sigStatus,
+		ReceivedAt:      time.Now().UTC(),
+	}
+
+	_, _ = s.store.InsertWebhookEvent(event)
 	s.hub.Broadcast("webhook_received", receiverID, event)
+
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`{"received":true}`))
+	_, _ = w.Write([]byte(`{"received":true,"id":"` + eventID + `"}`))
+}
+
+func (s *Server) handleWebhookEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	receiverID := r.URL.Query().Get("receiver_id")
+	events, err := s.store.ListWebhookEvents(receiverID, 50)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, events, nil)
+}
+
+func (s *Server) handleWebhookVerify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Secret    string `json:"secret"`
+		Payload   string `json:"payload"`
+		Signature string `json:"signature"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	valid := VerifySignature(req.Secret, []byte(req.Payload), req.Signature)
+	s.jsonResponse(w, http.StatusOK, map[string]bool{"valid": valid}, nil)
 }
 
 // VerifySignature checks HMAC SHA-256 webhook signatures

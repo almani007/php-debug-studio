@@ -81,4 +81,10 @@ export const api = {
     request<any[]>(`/laravel/routes?project_path=${encodeURIComponent(projectPath)}${phpBinaryPath ? `&php_binary_path=${encodeURIComponent(phpBinaryPath)}` : ''}`),
   purgeData: (retentionDays: number) =>
     request<any>('/settings/purge', { method: 'POST', body: JSON.stringify({ retention_days: retentionDays }) }),
+  getWebhookEvents: (receiverId?: string) =>
+    request<any[]>(`/webhooks/events${receiverId ? `?receiver_id=${encodeURIComponent(receiverId)}` : ''}`),
+  simulateWebhook: (data: { provider: string; secret?: string }) =>
+    request<any>('/webhooks/simulate', { method: 'POST', body: JSON.stringify(data) }),
+  verifyWebhookSignature: (data: { secret: string; payload: string; signature: string }) =>
+    request<{ valid: boolean }>('/webhooks/verify', { method: 'POST', body: JSON.stringify(data) }),
 };
