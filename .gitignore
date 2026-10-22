@@ -1,0 +1,52 @@
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# Dependencies
+node_modules/
+vendor/
+
+# Go build artifacts
+apps/daemon/bin/
+*.exe
+*.test
+*.prof
+
+# Tauri & Desktop builds
+apps/desktop/src-tauri/target/
+apps/desktop/dist/
+
+# Web builds
+apps/web/dist/
+apps/web/build/
+
+# SQLite local databases & logs
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.log
+storage/logs/
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+secrets/
+
+# IDE configurations
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Test & coverage artifacts
+coverage/
+.phpunit.result.cache
+report.xml
+junit.xml
