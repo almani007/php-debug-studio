@@ -229,12 +229,40 @@ func (s *Store) migrate() error {
 		created_at TEXT NOT NULL
 	);
 
+	CREATE TABLE IF NOT EXISTS js_debug_sessions (
+		id TEXT PRIMARY KEY,
+		project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+		runtime TEXT NOT NULL,
+		browser_name TEXT,
+		version TEXT,
+		connection_state TEXT,
+		started_at TEXT NOT NULL,
+		ended_at TEXT,
+		settings_json TEXT
+	);
+
+	CREATE TABLE IF NOT EXISTS js_console_events (
+		id TEXT PRIMARY KEY,
+		session_id TEXT NOT NULL REFERENCES js_debug_sessions(id) ON DELETE CASCADE,
+		trace_id TEXT,
+		severity TEXT NOT NULL,
+		message_redacted TEXT NOT NULL,
+		source_url TEXT,
+		line INTEGER,
+		column INTEGER,
+		stack_json TEXT,
+		occurred_at TEXT NOT NULL
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_traces_proj ON traces(project_id, started_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_spans_trace ON spans(trace_id);
 	CREATE INDEX IF NOT EXISTS idx_sql_trace ON sql_queries(trace_id);
 	CREATE INDEX IF NOT EXISTS idx_logs_proj ON logs(project_id, timestamp DESC);
 	CREATE INDEX IF NOT EXISTS idx_cookies_proj_domain ON cookies(project_id, domain);
 	CREATE INDEX IF NOT EXISTS idx_queue_jobs_proj_status ON queue_jobs(project_id, status);
+	CREATE INDEX IF NOT EXISTS idx_js_sessions_proj ON js_debug_sessions(project_id, started_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_js_events_session ON js_console_events(session_id, occurred_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_js_events_trace ON js_console_events(trace_id);
 	`
 	_, err := s.db.Exec(schema)
 	return err

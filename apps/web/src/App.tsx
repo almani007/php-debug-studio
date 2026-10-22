@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from './api/client';
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<'api' | 'traces' | 'sql' | 'logs' | 'tests' | 'artisan' | 'queues' | 'security' | 'routes' | 'xdebug' | 'webhooks' | 'streams' | 'projects'>('api');
+  const [activeTab, setActiveTab] = useState<'api' | 'traces' | 'sql' | 'logs' | 'tests' | 'artisan' | 'queues' | 'security' | 'routes' | 'xdebug' | 'webhooks' | 'jsdebug' | 'streams' | 'projects'>('api');
   const [health, setHealth] = useState<any>(null);
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
@@ -47,6 +47,21 @@ export function App() {
   const [replayTargetUrl, setReplayTargetUrl] = useState<string>('http://127.0.0.1:8000/api/webhooks');
   const [replayStatus, setReplayStatus] = useState<string | null>(null);
   const [replaying, setReplaying] = useState<boolean>(false);
+
+  // JavaScript Debug Studio state (Module 23)
+  const [jsSessions, setJsSessions] = useState<any[]>([]);
+  const [selectedJsSessionId, setSelectedJsSessionId] = useState<string>('');
+  const [jsConsoleEvents, setJsConsoleEvents] = useState<any[]>([]);
+  const [selectedJsEvent, setSelectedJsEvent] = useState<any | null>(null);
+  const [jsSeverityFilter, setJsSeverityFilter] = useState<string>('ALL');
+  const [jsTraceIdFilter, setJsTraceIdFilter] = useState<string>('');
+  const [jsSearchText, setJsSearchText] = useState<string>('');
+  const [jsLoading, setJsLoading] = useState<boolean>(false);
+  const [showSnippetModal, setShowSnippetModal] = useState<boolean>(false);
+  const [testEventMessage, setTestEventMessage] = useState<string>('Uncaught TypeError: Cannot read properties of undefined (reading "user")');
+  const [testEventSeverity, setTestEventSeverity] = useState<string>('error');
+  const [testEventTraceId, setTestEventTraceId] = useState<string>('');
+  const [testEventLoading, setTestEventLoading] = useState<boolean>(false);
 
   // Cookie Jar state
   const [cookies, setCookies] = useState<any[]>([]);
@@ -180,6 +195,9 @@ export function App() {
       loadBreakpoints();
     } else if (activeTab === 'webhooks') {
       loadWebhookEvents();
+    } else if (activeTab === 'jsdebug') {
+      loadJsSessions();
+      loadJsEvents();
     } else if (activeTab === 'streams') {
       const ws = new WebSocket('ws://127.0.0.1:8765/v1/events/stream');
       ws.onopen = () => setStreamConnected(true);
@@ -612,6 +630,92 @@ export function App() {
     setVerifyResult(null);
   };
 
+  const loadJsSessions = () => {
+    api.getJSSessions(selectedProjectId)
+      .then((data) => {
+        setJsSessions(data || []);
+        if (data && data.length > 0 && !selectedJsSessionId) {
+          setSelectedJsSessionId(data[0].id);
+        }
+      })
+      .catch(() => setJsSessions([]));
+  };
+
+  const loadJsEvents = (sessionId?: string, traceId?: string) => {
+    setJsLoading(true);
+    api.getJSConsoleEvents(sessionId || selectedJsSessionId, traceId || jsTraceIdFilter)
+      .then((data) => {
+        setJsConsoleEvents(data || []);
+        if (data && data.length > 0 && !selectedJsEvent) {
+          setSelectedJsEvent(data[0]);
+        }
+      })
+      .catch(() => setJsConsoleEvents([]))
+      .finally(() => setJsLoading(false));
+  };
+
+  const handleCreateJsSession = async () => {
+    try {
+      const sess = await api.createJSSession({
+        project_id: selectedProjectId || (projects[0]?.id || 'default'),
+        runtime: 'browser',
+        browser_name: 'Chrome / CDP',
+        version: '124.0.0',
+        settings_json: JSON.stringify({ user_agent: navigator.userAgent, viewport: `${window.innerWidth}x${window.innerHeight}` })
+      });
+      loadJsSessions();
+      if (sess?.id) {
+        setSelectedJsSessionId(sess.id);
+      }
+    } catch (err: any) {
+      alert(`Failed to create JS session: ${err.message}`);
+    }
+  };
+
+  const handleCloseJsSession = async (sessionId: string) => {
+    try {
+      await api.closeJSSession(sessionId);
+      loadJsSessions();
+    } catch (err: any) {
+      alert(`Failed to close session: ${err.message}`);
+    }
+  };
+
+  const handleEmitTestJsEvent = async () => {
+    let targetSessionId = selectedJsSessionId;
+    if (!targetSessionId) {
+      if (jsSessions.length > 0) {
+        targetSessionId = jsSessions[0].id;
+      } else {
+        alert('Please create or select an active JS session first.');
+        return;
+      }
+    }
+
+    setTestEventLoading(true);
+    try {
+      await api.emitJSConsoleEvent({
+        session_id: targetSessionId,
+        trace_id: testEventTraceId || undefined,
+        severity: testEventSeverity,
+        message_redacted: testEventMessage,
+        source_url: 'http://127.0.0.1:8000/resources/js/app.js',
+        line: 42,
+        column: 15,
+        stack_json: JSON.stringify([
+          { function: 'renderUserCard', file: 'http://127.0.0.1:8000/resources/js/components/UserCard.vue', line: 18, col: 5 },
+          { function: 'fetchUserData', file: 'http://127.0.0.1:8000/resources/js/app.js', line: 42, col: 15 },
+          { function: 'onClick', file: 'http://127.0.0.1:8000/resources/js/app.js', line: 75, col: 9 }
+        ])
+      });
+      loadJsEvents(targetSessionId);
+    } catch (err: any) {
+      alert(`Failed to emit test event: ${err.message}`);
+    } finally {
+      setTestEventLoading(false);
+    }
+  };
+
   // Keyboard Shortcuts & WCAG 2.1 AA Navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -950,6 +1054,7 @@ export function App() {
             { id: 'security', label: '🛡️ Security Audit' },
             { id: 'xdebug', label: '🐞 PHP Debugger' },
             { id: 'webhooks', label: '🪝 Webhook Studio' },
+            { id: 'jsdebug', label: '🌐 JS & Frontend Studio' },
             { id: 'streams', label: '📡 Live Streams' },
             { id: 'projects', label: '📁 Projects & PHP Runtimes' },
           ].map((tab) => (
@@ -3424,6 +3529,593 @@ export function App() {
                         {verifyResult.valid ? '✔ VALID SIGNATURE (MATCH)' : '✖ INVALID SIGNATURE (MISMATCH)'}
                       </div>
                     )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'jsdebug' && (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '14px', overflow: 'hidden' }}>
+              {/* Header and Controls */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
+                <div>
+                  <h2 style={{ fontSize: '16px', fontWeight: 600 }}>JavaScript & Frontend Debug Studio (Module 23)</h2>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Browser CDP & Node.js session tracking, console telemetry, frontend exceptions, and W3C trace correlation to backend PHP spans.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <button
+                    onClick={() => setShowSnippetModal(!showSnippetModal)}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: 'var(--bg-card)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    📋 Browser SDK Snippet
+                  </button>
+                  <button
+                    onClick={() => {
+                      loadJsSessions();
+                      loadJsEvents();
+                    }}
+                    disabled={jsLoading}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: 'var(--bg-card)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {jsLoading ? 'Refreshing...' : '🔄 Refresh'}
+                  </button>
+                  <button
+                    onClick={handleCreateJsSession}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: 'var(--accent)',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ➕ Connect Browser Session
+                  </button>
+                </div>
+              </div>
+
+              {/* Snippet Banner (Expandable) */}
+              {showSnippetModal && (
+                <div style={{
+                  padding: '12px 16px',
+                  borderRadius: '6px',
+                  backgroundColor: 'var(--bg-card)',
+                  border: '1px solid var(--border-color)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 600 }}>
+                      ⚡ Client Telemetry Bridge (Auto-instrument fetch & window.onerror to correlate with Laravel)
+                    </span>
+                    <button
+                      onClick={() => setShowSnippetModal(false)}
+                      style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '14px' }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <pre style={{
+                    padding: '10px',
+                    backgroundColor: 'var(--bg-main)',
+                    borderRadius: '4px',
+                    border: '1px solid var(--border-color)',
+                    fontSize: '11px',
+                    fontFamily: 'monospace',
+                    margin: 0,
+                    overflow: 'auto',
+                    maxHeight: '120px'
+                  }}>
+{`// Add to index.html or frontend entrypoint:
+window.__DS_SESSION = '${selectedJsSessionId || 'default-session'}';
+window.addEventListener('error', (e) => {
+  fetch('http://127.0.0.1:8765/v1/jsdebug/events', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: window.__DS_SESSION, severity: 'error', message_redacted: e.message, source_url: e.filename, line: e.lineno, column: e.colno })
+  });
+});`}
+                  </pre>
+                </div>
+              )}
+
+              {/* Sessions Bar */}
+              <div style={{
+                padding: '10px 14px',
+                borderRadius: '6px',
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid var(--border-color)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '10px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px' }}>
+                  <span style={{ fontWeight: 600, color: 'var(--text-secondary)', fontSize: '12px' }}>ACTIVE SESSION:</span>
+                  {jsSessions.length === 0 ? (
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '12px' }}>No active sessions. Click "Connect Browser Session" to attach.</span>
+                  ) : (
+                    <select
+                      value={selectedJsSessionId}
+                      onChange={(e) => {
+                        setSelectedJsSessionId(e.target.value);
+                        loadJsEvents(e.target.value);
+                      }}
+                      style={{
+                        padding: '4px 8px',
+                        borderRadius: '4px',
+                        border: '1px solid var(--border-color)',
+                        backgroundColor: 'var(--bg-main)',
+                        color: 'var(--text-primary)',
+                        fontSize: '12px'
+                      }}
+                    >
+                      {jsSessions.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.browser_name || s.runtime} ({s.connection_state}) — ID: {s.id.substring(0, 8)}...
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+
+                {selectedJsSessionId && (
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <span style={{
+                      padding: '3px 8px',
+                      borderRadius: '4px',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      backgroundColor: 'rgba(63, 185, 80, 0.15)',
+                      color: 'var(--success)'
+                    }}>
+                      CONNECTED
+                    </span>
+                    <button
+                      onClick={() => handleCloseJsSession(selectedJsSessionId)}
+                      style={{
+                        padding: '4px 8px',
+                        borderRadius: '4px',
+                        border: '1px solid var(--border-color)',
+                        backgroundColor: 'transparent',
+                        color: 'var(--danger)',
+                        fontSize: '11px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Main 2-Column Split Workspace */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '12px', flex: 1, minHeight: 0 }}>
+                {/* Left Panel: Console Event Stream */}
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  backgroundColor: 'var(--bg-card)',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-color)',
+                  overflow: 'hidden'
+                }}>
+                  {/* Filter Toolbar */}
+                  <div style={{
+                    padding: '8px 12px',
+                    borderBottom: '1px solid var(--border-color)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '8px',
+                    flexWrap: 'wrap'
+                  }}>
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      {['ALL', 'ERROR', 'WARN', 'INFO', 'LOG'].map((lvl) => (
+                        <button
+                          key={lvl}
+                          onClick={() => setJsSeverityFilter(lvl)}
+                          style={{
+                            padding: '3px 8px',
+                            borderRadius: '4px',
+                            border: '1px solid var(--border-color)',
+                            backgroundColor: jsSeverityFilter === lvl ? 'var(--accent)' : 'var(--bg-main)',
+                            color: jsSeverityFilter === lvl ? '#fff' : 'var(--text-secondary)',
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          {lvl}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '6px', flex: 1, justifyContent: 'flex-end' }}>
+                      <input
+                        type="text"
+                        value={jsSearchText}
+                        onChange={(e) => setJsSearchText(e.target.value)}
+                        placeholder="Search message..."
+                        style={{
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: 'var(--bg-main)',
+                          color: 'var(--text-primary)',
+                          fontSize: '11px',
+                          width: '130px'
+                        }}
+                      />
+                      <input
+                        type="text"
+                        value={jsTraceIdFilter}
+                        onChange={(e) => {
+                          setJsTraceIdFilter(e.target.value);
+                          loadJsEvents(selectedJsSessionId, e.target.value);
+                        }}
+                        placeholder="Filter by Trace ID..."
+                        style={{
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: 'var(--bg-main)',
+                          color: 'var(--text-primary)',
+                          fontSize: '11px',
+                          width: '130px'
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Events Stream List */}
+                  <div style={{ flex: 1, overflowY: 'auto', padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {(() => {
+                      const filtered = jsConsoleEvents.filter((evt) => {
+                        if (jsSeverityFilter !== 'ALL' && evt.severity.toUpperCase() !== jsSeverityFilter) {
+                          return false;
+                        }
+                        if (jsSearchText && !evt.message_redacted.toLowerCase().includes(jsSearchText.toLowerCase())) {
+                          return false;
+                        }
+                        return true;
+                      });
+
+                      if (filtered.length === 0) {
+                        return (
+                          <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '12px' }}>
+                            No console events matching filter.<br />
+                            Use the Test Emitter on the right or run frontend actions to stream logs.
+                          </div>
+                        );
+                      }
+
+                      return filtered.map((evt) => {
+                        const isSelected = selectedJsEvent?.id === evt.id;
+                        const sev = (evt.severity || 'info').toLowerCase();
+                        const badgeColor =
+                          sev === 'error' ? 'var(--danger)' :
+                          sev === 'warn' ? 'var(--warning, #d29922)' :
+                          sev === 'info' ? 'var(--accent)' : 'var(--text-secondary)';
+
+                        return (
+                          <div
+                            key={evt.id}
+                            onClick={() => setSelectedJsEvent(evt)}
+                            style={{
+                              padding: '10px 12px',
+                              borderRadius: '6px',
+                              border: `1px solid ${isSelected ? 'var(--accent)' : 'var(--border-color)'}`,
+                              backgroundColor: isSelected ? 'rgba(88, 166, 255, 0.08)' : 'var(--bg-main)',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '6px'
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                <span style={{
+                                  fontSize: '10px',
+                                  fontWeight: 700,
+                                  padding: '2px 6px',
+                                  borderRadius: '3px',
+                                  backgroundColor: badgeColor,
+                                  color: '#fff',
+                                  textTransform: 'uppercase'
+                                }}>
+                                  {evt.severity}
+                                </span>
+                                <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
+                                  {evt.source_url ? `${evt.source_url.split('/').pop()}:${evt.line || 0}` : 'console'}
+                                </span>
+                              </div>
+
+                              <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                                {new Date(evt.occurred_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                              </span>
+                            </div>
+
+                            <div style={{
+                              fontSize: '12px',
+                              fontFamily: 'monospace',
+                              color: 'var(--text-primary)',
+                              wordBreak: 'break-word',
+                              whiteSpace: 'pre-wrap'
+                            }}>
+                              {evt.message_redacted}
+                            </div>
+
+                            {evt.trace_id && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+                                <span style={{
+                                  fontSize: '10px',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  backgroundColor: 'rgba(88, 166, 255, 0.15)',
+                                  color: 'var(--accent)',
+                                  fontWeight: 600
+                                }}>
+                                  🔗 Trace: {evt.trace_id.substring(0, 12)}...
+                                </span>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActiveTab('traces');
+                                  }}
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    color: 'var(--accent)',
+                                    fontSize: '10px',
+                                    textDecoration: 'underline',
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  Open in Waterfall →
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
+
+                {/* Right Panel: Event Inspector & Simulator */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflowY: 'auto' }}>
+                  {/* Selected Event Detail */}
+                  <div style={{
+                    padding: '12px',
+                    borderRadius: '6px',
+                    backgroundColor: 'var(--bg-card)',
+                    border: '1px solid var(--border-color)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px'
+                  }}>
+                    <div style={{ fontSize: '13px', fontWeight: 600 }}>Event Inspector</div>
+
+                    {selectedJsEvent ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                          <span style={{ color: 'var(--text-secondary)' }}>Severity:</span>
+                          <span style={{ fontWeight: 600, textTransform: 'uppercase' }}>{selectedJsEvent.severity}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                          <span style={{ color: 'var(--text-secondary)' }}>Occurred:</span>
+                          <span>{new Date(selectedJsEvent.occurred_at).toLocaleString()}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px' }}>
+                          <span style={{ color: 'var(--text-secondary)' }}>Source Location:</span>
+                          <span style={{ fontFamily: 'monospace', fontSize: '11px' }}>
+                            {selectedJsEvent.source_url || 'inline'}:{selectedJsEvent.line}:{selectedJsEvent.column}
+                          </span>
+                        </div>
+
+                        {/* Full-Stack Trace Correlation Card */}
+                        <div style={{
+                          padding: '8px 10px',
+                          borderRadius: '4px',
+                          backgroundColor: selectedJsEvent.trace_id ? 'rgba(88, 166, 255, 0.1)' : 'rgba(255,255,255,0.03)',
+                          border: `1px solid ${selectedJsEvent.trace_id ? 'rgba(88, 166, 255, 0.3)' : 'var(--border-color)'}`,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '6px'
+                        }}>
+                          <div style={{ fontSize: '11px', fontWeight: 600, color: selectedJsEvent.trace_id ? 'var(--accent)' : 'var(--text-secondary)' }}>
+                            {selectedJsEvent.trace_id ? '⚡ FULL-STACK CORRELATION (W3C TRACEPARENT)' : 'NO BACKEND TRACE LINKED'}
+                          </div>
+                          {selectedJsEvent.trace_id ? (
+                            <>
+                              <div style={{ fontSize: '11px', fontFamily: 'monospace', color: 'var(--text-primary)' }}>
+                                {selectedJsEvent.trace_id}
+                              </div>
+                              <button
+                                onClick={() => setActiveTab('traces')}
+                                style={{
+                                  padding: '5px 8px',
+                                  backgroundColor: 'var(--accent)',
+                                  color: '#fff',
+                                  border: 'none',
+                                  borderRadius: '4px',
+                                  fontSize: '11px',
+                                  fontWeight: 600,
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                🌊 Open Correlated PHP Backend Trace
+                              </button>
+                            </>
+                          ) : (
+                            <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                              Attach <code>traceparent</code> header to frontend fetch calls to automatically view backend SQL and spans.
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Stack Trace */}
+                        <div>
+                          <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                            CALL STACK
+                          </div>
+                          <pre style={{
+                            padding: '8px',
+                            backgroundColor: 'var(--bg-main)',
+                            borderRadius: '4px',
+                            border: '1px solid var(--border-color)',
+                            fontSize: '11px',
+                            fontFamily: 'monospace',
+                            margin: 0,
+                            overflow: 'auto',
+                            maxHeight: '140px'
+                          }}>
+                            {(() => {
+                              try {
+                                const parsed = JSON.parse(selectedJsEvent.stack_json);
+                                if (Array.isArray(parsed) && parsed.length > 0) {
+                                  return parsed.map((f: any, i: number) => ` #${i} ${f.function || 'anonymous'} (${f.file || 'app.js'}:${f.line}:${f.col})`).join('\n');
+                                }
+                              } catch {
+                                // ignore
+                              }
+                              return selectedJsEvent.stack_json || '(No call stack recorded)';
+                            })()}
+                          </pre>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ color: 'var(--text-secondary)', fontSize: '12px', textAlign: 'center', padding: '16px' }}>
+                        Select a console event from the stream to inspect details and stack trace.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Test Event Simulator Box */}
+                  <div style={{
+                    padding: '12px',
+                    borderRadius: '6px',
+                    backgroundColor: 'var(--bg-card)',
+                    border: '1px solid var(--border-color)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px'
+                  }}>
+                    <div style={{ fontSize: '13px', fontWeight: 600 }}>Emit Test Frontend Event</div>
+                    <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>
+                      Simulate client-side errors and test end-to-end trace correlation with backend traces.
+                    </p>
+
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                        SEVERITY
+                      </label>
+                      <select
+                        value={testEventSeverity}
+                        onChange={(e) => setTestEventSeverity(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: 'var(--bg-main)',
+                          color: 'var(--text-primary)',
+                          fontSize: '12px'
+                        }}
+                      >
+                        <option value="error">error</option>
+                        <option value="warn">warn</option>
+                        <option value="info">info</option>
+                        <option value="log">log</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                        OPTIONAL CORRELATED TRACE ID
+                      </label>
+                      <input
+                        type="text"
+                        value={testEventTraceId}
+                        onChange={(e) => setTestEventTraceId(e.target.value)}
+                        placeholder="e.g. 4bf92f3577b34da6a3ce929d0e0e4736"
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: 'var(--bg-main)',
+                          color: 'var(--text-primary)',
+                          fontSize: '11px',
+                          fontFamily: 'monospace'
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                        MESSAGE
+                      </label>
+                      <textarea
+                        value={testEventMessage}
+                        onChange={(e) => setTestEventMessage(e.target.value)}
+                        rows={2}
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: 'var(--bg-main)',
+                          color: 'var(--text-primary)',
+                          fontSize: '11px',
+                          fontFamily: 'monospace',
+                          resize: 'vertical'
+                        }}
+                      />
+                    </div>
+
+                    <button
+                      onClick={handleEmitTestJsEvent}
+                      disabled={testEventLoading}
+                      style={{
+                        padding: '8px',
+                        backgroundColor: 'var(--accent)',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {testEventLoading ? 'Emitting...' : '🚀 Emit to JS Stream'}
+                    </button>
                   </div>
                 </div>
               </div>

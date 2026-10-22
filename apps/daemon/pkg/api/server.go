@@ -153,6 +153,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/webhooks/events", s.handleWebhookEvents)
 	s.mux.HandleFunc("/v1/webhooks/verify", s.handleWebhookVerify)
 
+	// JavaScript Debug Studio (Module 23)
+	s.mux.HandleFunc("/v1/jsdebug/sessions", s.handleJSDebugSessions)
+	s.mux.HandleFunc("/v1/jsdebug/sessions/", s.handleJSDebugSessionDetail)
+	s.mux.HandleFunc("/v1/jsdebug/events", s.handleJSConsoleEvents)
+
 	// Breakpoint Management (Module 10)
 	s.mux.HandleFunc("/v1/debug/breakpoints", s.handleBreakpoints)
 	s.mux.HandleFunc("/v1/debug/breakpoints/", s.handleBreakpointDetail)
@@ -1172,4 +1177,95 @@ func (s *Server) handleLaravelRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.jsonResponse(w, http.StatusOK, routes, nil)
+}
+
+func (s *Server) handleJSDebugSessions(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		projectID := r.URL.Query().Get("project_id")
+		sessions, err := s.store.ListJSSessions(projectID)
+		if err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, sessions, nil)
+
+	case http.MethodPost:
+		var sess store.JSSession
+		if err := json.NewDecoder(r.Body).Decode(&sess); err != nil {
+			s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+			return
+		}
+		if sess.Runtime == "" {
+			sess.Runtime = "browser"
+		}
+		id, err := s.store.CreateJSSession(sess)
+		if err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		sess.ID = id
+		s.hub.Broadcast("js_session_started", sess.ProjectID, sess)
+		s.jsonResponse(w, http.StatusCreated, sess, nil)
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleJSDebugSessionDetail(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 4 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	sessionID := parts[3]
+	action := ""
+	if len(parts) >= 5 {
+		action = parts[4]
+	}
+
+	if r.Method == http.MethodPost && action == "close" {
+		if err := s.store.CloseJSSession(sessionID); err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		s.hub.Broadcast("js_session_closed", "", map[string]string{"session_id": sessionID})
+		s.jsonResponse(w, http.StatusOK, map[string]bool{"closed": true}, nil)
+		return
+	}
+
+	w.WriteHeader(http.StatusMethodNotAllowed)
+}
+
+func (s *Server) handleJSConsoleEvents(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		sessionID := r.URL.Query().Get("session_id")
+		traceID := r.URL.Query().Get("trace_id")
+		events, err := s.store.ListJSConsoleEvents(sessionID, traceID, 100)
+		if err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, events, nil)
+
+	case http.MethodPost:
+		var event store.JSConsoleEvent
+		if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
+			s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+			return
+		}
+		id, err := s.store.InsertJSConsoleEvent(event)
+		if err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		event.ID = id
+		s.hub.Broadcast("js_console_event", event.SessionID, event)
+		s.jsonResponse(w, http.StatusCreated, event, nil)
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
 }

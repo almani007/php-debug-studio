@@ -87,4 +87,14 @@ export const api = {
     request<any>('/webhooks/simulate', { method: 'POST', body: JSON.stringify(data) }),
   verifyWebhookSignature: (data: { secret: string; payload: string; signature: string }) =>
     request<{ valid: boolean }>('/webhooks/verify', { method: 'POST', body: JSON.stringify(data) }),
+  getJSSessions: (projectId?: string) =>
+    request<any[]>(`/jsdebug/sessions${projectId ? `?project_id=${projectId}` : ''}`),
+  createJSSession: (data: { project_id: string; runtime?: string; browser_name?: string; version?: string; settings_json?: string }) =>
+    request<any>('/jsdebug/sessions', { method: 'POST', body: JSON.stringify(data) }),
+  closeJSSession: (sessionId: string) =>
+    request<any>(`/jsdebug/sessions/${sessionId}/close`, { method: 'POST' }),
+  getJSConsoleEvents: (sessionId?: string, traceId?: string) =>
+    request<any[]>(`/jsdebug/events?session_id=${sessionId || ''}&trace_id=${traceId || ''}`),
+  emitJSConsoleEvent: (data: { session_id: string; trace_id?: string; severity: string; message_redacted: string; source_url?: string; line?: number; column?: number; stack_json?: string }) =>
+    request<any>('/jsdebug/events', { method: 'POST', body: JSON.stringify(data) }),
 };
