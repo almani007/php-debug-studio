@@ -59,4 +59,18 @@ export const api = {
     request<any>(`/debug/sessions/${sessionId}/eval`, { method: 'POST', body: JSON.stringify({ expression }) }),
   executeGraphQL: (data: { endpoint: string; query: string; variables?: Record<string, any>; headers?: Record<string, string> }) =>
     request<any>('/graphql/execute', { method: 'POST', body: JSON.stringify(data) }),
+  getCookies: (projectId?: string, domain?: string) =>
+    request<any[]>(`/cookies?project_id=${projectId || ''}${domain ? `&domain=${domain}` : ''}`),
+  saveCookie: (cookie: any) =>
+    request<any>('/cookies', { method: 'POST', body: JSON.stringify(cookie) }),
+  deleteCookie: (id: string) =>
+    request<any>(`/cookies/${id}`, { method: 'DELETE' }),
+  clearCookies: (projectId: string) =>
+    request<any>(`/cookies?project_id=${projectId}`, { method: 'DELETE' }),
+  getQueueJobs: (projectId?: string, status?: string) =>
+    request<any[]>(`/queue/jobs?project_id=${projectId || ''}${status ? `&status=${status}` : ''}`),
+  saveQueueJob: (job: any) =>
+    request<any>('/queue/jobs', { method: 'POST', body: JSON.stringify(job) }),
+  replayQueueJob: (id: string) =>
+    request<any>(`/queue/jobs/${id}/replay`, { method: 'POST' }),
 };

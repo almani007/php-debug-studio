@@ -199,10 +199,42 @@ func (s *Store) migrate() error {
 		enabled INTEGER DEFAULT 1
 	);
 
+	CREATE TABLE IF NOT EXISTS cookies (
+		id TEXT PRIMARY KEY,
+		project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+		domain TEXT NOT NULL,
+		path TEXT NOT NULL DEFAULT '/',
+		name TEXT NOT NULL,
+		value TEXT NOT NULL,
+		expires_at TEXT,
+		secure INTEGER DEFAULT 0,
+		http_only INTEGER DEFAULT 0,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		UNIQUE(project_id, domain, path, name)
+	);
+
+	CREATE TABLE IF NOT EXISTS queue_jobs (
+		id TEXT PRIMARY KEY,
+		project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+		queue_name TEXT NOT NULL,
+		connection TEXT NOT NULL DEFAULT 'default',
+		job_class TEXT NOT NULL,
+		payload_json TEXT NOT NULL,
+		attempts INTEGER DEFAULT 0,
+		status TEXT NOT NULL,
+		exception_message TEXT,
+		exception_trace TEXT,
+		failed_at TEXT,
+		created_at TEXT NOT NULL
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_traces_proj ON traces(project_id, started_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_spans_trace ON spans(trace_id);
 	CREATE INDEX IF NOT EXISTS idx_sql_trace ON sql_queries(trace_id);
 	CREATE INDEX IF NOT EXISTS idx_logs_proj ON logs(project_id, timestamp DESC);
+	CREATE INDEX IF NOT EXISTS idx_cookies_proj_domain ON cookies(project_id, domain);
+	CREATE INDEX IF NOT EXISTS idx_queue_jobs_proj_status ON queue_jobs(project_id, status);
 	`
 	_, err := s.db.Exec(schema)
 	return err

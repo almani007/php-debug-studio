@@ -38,6 +38,7 @@ type ExecutionResponse struct {
 	TraceID         string            `json:"trace_id"`
 	Timings         Timings           `json:"timings"`
 	ContentLength   int64             `json:"content_length"`
+	SetCookies      []string          `json:"set_cookies,omitempty"`
 	Error           string            `json:"error,omitempty"`
 }
 
@@ -156,10 +157,16 @@ func (e *Engine) Execute(req ExecutionRequest) *ExecutionResponse {
 		respHeaders[k] = strings.Join(v, ", ")
 	}
 
+	var setCookies []string
+	if sc, ok := resp.Header["Set-Cookie"]; ok {
+		setCookies = sc
+	}
+
 	return &ExecutionResponse{
 		RunID:         runID,
 		StatusCode:    resp.StatusCode,
 		Headers:       respHeaders,
+		SetCookies:    setCookies,
 		Body:          string(bodyBytes),
 		DurationMs:    duration,
 		TraceID:       traceID,

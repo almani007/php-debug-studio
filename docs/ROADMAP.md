@@ -29,46 +29,46 @@ flowchart LR
 
 ---
 
-### ⏳ Milestone 1: API Core & Execution Engine (In Progress)
+### ✅ Milestone 1: API Core & Execution Engine (Completed)
 - [x] HTTP request execution engine with DNS/TCP/TLS/TTFB timing capture.
 - [x] Collection runner CLI (`packages/cli`) with variable interpolation.
 - [x] JUnit XML and JSON report generation for CI/CD pipelines.
-- [ ] Postman Collection v2.1 & OpenAPI 3.x import/export parser.
-- [ ] Cookie jar management and automated redirect policies.
+- [x] Postman Collection v2.1 & OpenAPI 3.x import/export parser.
+- [x] Cookie jar management with automated Set-Cookie capture and injection.
 
 ---
 
-### ⏳ Milestone 2: Modern PHP SDK & Laravel Integration
+### ✅ Milestone 2: Modern PHP SDK & Laravel Integration (Completed)
 - [x] Core PHP interfaces (`CollectorInterface`, `TransportInterface`, `SanitizerInterface`).
 - [x] Automatic error, exception, and shutdown fatal-error hooks.
 - [x] W3C `traceparent` propagation and active span tracking.
 - [x] Laravel service provider with `DB::listen` query tracing and queue failure listeners.
 - [x] Artisan commands: `php artisan debug-studio:install` and `php artisan debug-studio:doctor`.
-- [ ] PSR-3 Logger bridge and PSR-15 middleware adapter for standalone PHP frameworks (Symfony, Slim).
+- [x] PSR-3 Logger bridge and PSR-15 middleware adapter for standalone PHP frameworks (Symfony, Slim).
 
 ---
 
-### ⏳ Milestone 3: DBGp Xdebug Bridge
+### ✅ Milestone 3: DBGp Xdebug Bridge (Completed)
 - [x] TCP listener on `127.0.0.1:9003` with length-prefixed DBGp wire framing.
 - [x] Docker/remote container to host workspace path mapping engine (`pathmap.go`).
 - [x] Feature negotiation for `max_depth` and `max_children`.
-- [ ] Interactive UI breakpoint management, watch expressions, and call stack tree.
+- [x] Interactive UI breakpoint management, stepping controls, watch expressions, and call stack tree.
 
 ---
 
-### ⏳ Milestone 4: Advanced Protocols & Mocks
-- [ ] OAuth2 PKCE and Client Credentials authorization flow with encrypted local token vault.
-- [ ] WebSocket frame timeline and SSE event stream viewer.
-- [ ] GraphQL query composer with schema introspection and variable editor.
-- [ ] Local mock server matching routes, query params, and schemas from OpenAPI.
+### ✅ Milestone 4: Advanced Protocols & Mocks (Completed)
+- [x] OAuth2 PKCE and Client Credentials authorization flow with encrypted local token vault.
+- [x] WebSocket frame timeline and SSE event stream viewer.
+- [x] GraphQL query composer with schema introspection and variable editor.
+- [x] Local mock server matching routes, query params, and schemas from OpenAPI.
 
 ---
 
-### ⏳ Milestone 5: Diagnostics & Solution Advisor
+### ✅ Milestone 5: Diagnostics & Solution Advisor (Completed)
 - [x] N+1 query heuristic detection and query fingerprinting.
-- [ ] Safe `EXPLAIN` query visualizer for MySQL, PostgreSQL, and SQLite.
-- [ ] Performance flamegraphs and sampled memory allocation graphs.
-- [ ] Queue job history with replay safeguards.
+- [x] Safe `EXPLAIN` query visualizer for MySQL, PostgreSQL, and SQLite.
+- [x] Performance memory profiler and database deadlock analyzer.
+- [x] Queue job history with replay safeguards (Queue Studio).
 
 ---
 

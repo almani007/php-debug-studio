@@ -270,6 +270,38 @@ CREATE TABLE IF NOT EXISTS db_recommendations (
     approval_status TEXT DEFAULT 'pending'
 );
 
+-- Cookie Jar & Session State (Module 02)
+CREATE TABLE IF NOT EXISTS cookies (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    domain TEXT NOT NULL,
+    path TEXT NOT NULL DEFAULT '/',
+    name TEXT NOT NULL,
+    value TEXT NOT NULL,
+    expires_at TEXT,
+    secure INTEGER DEFAULT 0,
+    http_only INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(project_id, domain, path, name)
+);
+
+-- Queue Diagnostics & Replayer (Module 20)
+CREATE TABLE IF NOT EXISTS queue_jobs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    queue_name TEXT NOT NULL,
+    connection TEXT NOT NULL DEFAULT 'default',
+    job_class TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    attempts INTEGER DEFAULT 0,
+    status TEXT NOT NULL,
+    exception_message TEXT,
+    exception_trace TEXT,
+    failed_at TEXT,
+    created_at TEXT NOT NULL
+);
+
 -- Indexes for high-performance querying
 CREATE INDEX IF NOT EXISTS idx_traces_project_started ON traces(project_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_spans_trace_parent ON spans(trace_id, parent_span_id);
@@ -278,3 +310,5 @@ CREATE INDEX IF NOT EXISTS idx_logs_project_timestamp ON logs(project_id, timest
 CREATE INDEX IF NOT EXISTS idx_error_issues_fp ON error_issues(project_id, fingerprint);
 CREATE INDEX IF NOT EXISTS idx_webhook_events_recv_time ON webhook_events(receiver_id, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_js_console_session_time ON js_console_events(session_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cookies_proj_domain ON cookies(project_id, domain);
+CREATE INDEX IF NOT EXISTS idx_queue_jobs_proj_status ON queue_jobs(project_id, status);

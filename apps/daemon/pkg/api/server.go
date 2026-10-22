@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -157,6 +158,14 @@ func (s *Server) registerRoutes() {
 
 	// Safe Artisan Runner (Module 18)
 	s.mux.HandleFunc("/v1/artisan/run", s.handleArtisanRun)
+
+	// Cookie Jar & Session State (Module 02)
+	s.mux.HandleFunc("/v1/cookies", s.handleCookies)
+	s.mux.HandleFunc("/v1/cookies/", s.handleCookieDetail)
+
+	// Queue Diagnostics & Replayer (Module 20)
+	s.mux.HandleFunc("/v1/queue/jobs", s.handleQueueJobs)
+	s.mux.HandleFunc("/v1/queue/jobs/", s.handleQueueJobDetail)
 }
 
 func (s *Server) handleTestRuns(w http.ResponseWriter, r *http.Request) {
@@ -602,8 +611,178 @@ func (s *Server) handleExecuteRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Automated Cookie Jar Injection (Module 02)
+	parsedURL, _ := url.Parse(req.URL)
+	var host string
+	if parsedURL != nil {
+		host = parsedURL.Hostname()
+	}
+
+	if req.ProjectID != "" && host != "" {
+		if req.Headers == nil {
+			req.Headers = make(map[string]string)
+		}
+		if _, hasCookie := req.Headers["Cookie"]; !hasCookie {
+			cookies, _ := s.store.ListCookies(req.ProjectID, host)
+			if len(cookies) > 0 {
+				var cookiePairs []string
+				for _, c := range cookies {
+					if c.ExpiresAt == nil || c.ExpiresAt.After(time.Now()) {
+						cookiePairs = append(cookiePairs, c.Name+"="+c.Value)
+					}
+				}
+				if len(cookiePairs) > 0 {
+					req.Headers["Cookie"] = strings.Join(cookiePairs, "; ")
+				}
+			}
+		}
+	}
+
 	resp := s.engine.Execute(req)
+
+	// Automated Cookie Jar Capture from Set-Cookie
+	if req.ProjectID != "" && host != "" && len(resp.SetCookies) > 0 {
+		dummyResp := &http.Response{Header: http.Header{"Set-Cookie": resp.SetCookies}}
+		for _, parsedCookie := range dummyResp.Cookies() {
+			cookieDomain := parsedCookie.Domain
+			if cookieDomain == "" {
+				cookieDomain = host
+			}
+			cookieDomain = strings.TrimPrefix(cookieDomain, ".")
+
+			c := store.Cookie{
+				ProjectID: req.ProjectID,
+				Domain:    cookieDomain,
+				Path:      parsedCookie.Path,
+				Name:      parsedCookie.Name,
+				Value:     parsedCookie.Value,
+				Secure:    parsedCookie.Secure,
+				HttpOnly:  parsedCookie.HttpOnly,
+			}
+			if !parsedCookie.Expires.IsZero() {
+				c.ExpiresAt = &parsedCookie.Expires
+			}
+			_, _ = s.store.SaveCookie(c)
+		}
+		s.hub.Broadcast("cookies_updated", req.ProjectID, map[string]string{"domain": host})
+	}
+
 	s.jsonResponse(w, http.StatusOK, resp, nil)
+}
+
+func (s *Server) handleCookies(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		projectID := r.URL.Query().Get("project_id")
+		domain := r.URL.Query().Get("domain")
+		list, err := s.store.ListCookies(projectID, domain)
+		if err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, list, nil)
+
+	case http.MethodPost:
+		var c store.Cookie
+		if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
+			s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+			return
+		}
+		id, err := s.store.SaveCookie(c)
+		if err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		c.ID = id
+		s.hub.Broadcast("cookies_updated", c.ProjectID, c)
+		s.jsonResponse(w, http.StatusCreated, c, nil)
+
+	case http.MethodDelete:
+		projectID := r.URL.Query().Get("project_id")
+		if err := s.store.ClearCookies(projectID); err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		s.hub.Broadcast("cookies_cleared", projectID, map[string]string{"project_id": projectID})
+		s.jsonResponse(w, http.StatusOK, map[string]string{"status": "cleared"}, nil)
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleCookieDetail(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/v1/cookies/")
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	if r.Method == http.MethodDelete {
+		if err := s.store.DeleteCookie(id); err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted"}, nil)
+		return
+	}
+
+	w.WriteHeader(http.StatusMethodNotAllowed)
+}
+
+func (s *Server) handleQueueJobs(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		projectID := r.URL.Query().Get("project_id")
+		status := r.URL.Query().Get("status")
+		jobs, err := s.store.ListQueueJobs(projectID, status)
+		if err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, jobs, nil)
+
+	case http.MethodPost:
+		var job store.QueueJob
+		if err := json.NewDecoder(r.Body).Decode(&job); err != nil {
+			s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+			return
+		}
+		id, err := s.store.SaveQueueJob(job)
+		if err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		job.ID = id
+		s.hub.Broadcast("queue_job_logged", job.ProjectID, job)
+		s.jsonResponse(w, http.StatusCreated, job, nil)
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleQueueJobDetail(w http.ResponseWriter, r *http.Request) {
+	// Pattern: /v1/queue/jobs/{id}/replay
+	path := strings.TrimPrefix(r.URL.Path, "/v1/queue/jobs/")
+	parts := strings.Split(path, "/")
+	id := parts[0]
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	if len(parts) >= 2 && parts[1] == "replay" && r.Method == http.MethodPost {
+		if err := s.store.ReplayQueueJob(id); err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		s.hub.Broadcast("queue_job_replayed", "", map[string]string{"id": id})
+		s.jsonResponse(w, http.StatusOK, map[string]string{"status": "replayed", "id": id}, nil)
+		return
+	}
+
+	w.WriteHeader(http.StatusNotFound)
 }
 
 type IngestPayload struct {

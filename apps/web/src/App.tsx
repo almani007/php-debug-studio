@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from './api/client';
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<'api' | 'traces' | 'sql' | 'logs' | 'tests' | 'artisan' | 'xdebug' | 'webhooks' | 'streams' | 'projects'>('api');
+  const [activeTab, setActiveTab] = useState<'api' | 'traces' | 'sql' | 'logs' | 'tests' | 'artisan' | 'queues' | 'xdebug' | 'webhooks' | 'streams' | 'projects'>('api');
   const [health, setHealth] = useState<any>(null);
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
@@ -15,6 +15,17 @@ export function App() {
   const [reqBody, setReqBody] = useState<string>('{\n  "name": "Jane Doe"\n}');
   const [response, setResponse] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
+
+  // Cookie Jar state
+  const [cookies, setCookies] = useState<any[]>([]);
+  const [showCookieJar, setShowCookieJar] = useState<boolean>(false);
+  const [newCookieDomain, setNewCookieDomain] = useState<string>('127.0.0.1');
+  const [newCookieName, setNewCookieName] = useState<string>('');
+  const [newCookieValue, setNewCookieValue] = useState<string>('');
+
+  // Importer modal state
+  const [showImportModal, setShowImportModal] = useState<boolean>(false);
+  const [importInput, setImportInput] = useState<string>('');
 
   // GraphQL state
   const [gqlEndpoint, setGqlEndpoint] = useState<string>('http://127.0.0.1:8000/graphql');
@@ -34,6 +45,11 @@ export function App() {
   const [artisanCmd, setArtisanCmd] = useState<string>('about');
   const [artisanOutput, setArtisanOutput] = useState<any>(null);
   const [artisanLoading, setArtisanLoading] = useState<boolean>(false);
+
+  // Queue Studio state
+  const [queueJobs, setQueueJobs] = useState<any[]>([]);
+  const [queueStatusFilter, setQueueStatusFilter] = useState<string>('all');
+  const [queueLoading, setQueueLoading] = useState<boolean>(false);
 
   // DBGp Debugger state
   const [debugSessions, setDebugSessions] = useState<any[]>([]);
@@ -106,6 +122,10 @@ export function App() {
       api.getLogs(selectedProjectId)
         .then((data) => setLogs(data || []))
         .catch(() => setLogs([]));
+    } else if (activeTab === 'queues') {
+      loadQueueJobs();
+    } else if (activeTab === 'api') {
+      loadCookies();
     } else if (activeTab === 'xdebug') {
       loadDebugSessions();
       loadBreakpoints();
@@ -225,6 +245,135 @@ export function App() {
       setGqlResponse({ error: err.message });
     } finally {
       setGqlLoading(false);
+    }
+  };
+
+  const loadCookies = () => {
+    api.getCookies(selectedProjectId)
+      .then((data) => setCookies(data || []))
+      .catch(() => setCookies([]));
+  };
+
+  const handleSaveCookie = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCookieName) return;
+    try {
+      await api.saveCookie({
+        project_id: selectedProjectId || 'default',
+        domain: newCookieDomain || '127.0.0.1',
+        name: newCookieName,
+        value: newCookieValue,
+        path: '/',
+      });
+      setNewCookieName('');
+      setNewCookieValue('');
+      loadCookies();
+    } catch (err: any) {
+      alert(`Failed to save cookie: ${err.message}`);
+    }
+  };
+
+  const handleDeleteCookie = async (id: string) => {
+    try {
+      await api.deleteCookie(id);
+      loadCookies();
+    } catch (err: any) {
+      alert(`Failed to delete cookie: ${err.message}`);
+    }
+  };
+
+  const handleClearCookies = async () => {
+    if (!confirm('Clear all cookies for this project?')) return;
+    try {
+      await api.clearCookies(selectedProjectId || 'default');
+      loadCookies();
+    } catch (err: any) {
+      alert(`Failed to clear cookies: ${err.message}`);
+    }
+  };
+
+  const handleImportRequest = () => {
+    if (!importInput.trim()) return;
+    const trimmed = importInput.trim();
+
+    // Check if JSON (Postman or OpenAPI)
+    if (trimmed.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed.item && Array.isArray(parsed.item)) {
+          // Postman v2.1
+          const firstReq = parsed.item[0]?.request;
+          if (firstReq) {
+            setMethod(firstReq.method || 'GET');
+            setUrl(typeof firstReq.url === 'string' ? firstReq.url : (firstReq.url?.raw || url));
+            if (firstReq.body?.raw) setReqBody(firstReq.body.raw);
+          }
+        } else if (parsed.paths) {
+          // OpenAPI 3.x
+          const firstPath = Object.keys(parsed.paths)[0];
+          if (firstPath) {
+            const pathItem = parsed.paths[firstPath];
+            const firstMethod = Object.keys(pathItem)[0]?.toUpperCase() || 'GET';
+            setMethod(firstMethod as any);
+            setUrl(`http://127.0.0.1:8000${firstPath}`);
+          }
+        }
+        setShowImportModal(false);
+        setImportInput('');
+        return;
+      } catch {}
+    }
+
+    // Check if cURL command
+    if (trimmed.toLowerCase().startsWith('curl')) {
+      let m = 'GET';
+      let targetUrl = '';
+      let data = '';
+
+      const methodMatch = trimmed.match(/-X\s+([A-Z]+)/i);
+      if (methodMatch) m = methodMatch[1].toUpperCase();
+
+      const urlMatch = trimmed.match(/(?:curl\s+)?['"]?(https?:\/\/[^\s'"]+)/i);
+      if (urlMatch) targetUrl = urlMatch[1];
+
+      const dataMatch = trimmed.match(/(?:-d|--data|--data-raw)\s+['"]([^'"]+)['"]/);
+      if (dataMatch) {
+        data = dataMatch[1];
+        if (!methodMatch) m = 'POST';
+      }
+
+      if (targetUrl) setUrl(targetUrl);
+      setMethod(m as any);
+      if (data) setReqBody(data);
+
+      setShowImportModal(false);
+      setImportInput('');
+    }
+  };
+
+  const handleCopyAsCurl = () => {
+    let cmd = `curl -X ${method} "${url}" -H "Content-Type: application/json"`;
+    if (method !== 'GET' && reqBody) {
+      cmd += ` -d '${reqBody.replace(/'/g, "'\\''")}'`;
+    }
+    navigator.clipboard.writeText(cmd);
+    alert('Copied cURL command to clipboard!');
+  };
+
+  const loadQueueJobs = () => {
+    setQueueLoading(true);
+    api.getQueueJobs(selectedProjectId, queueStatusFilter)
+      .then((data) => setQueueJobs(data || []))
+      .catch(() => setQueueJobs([]))
+      .finally(() => setQueueLoading(false));
+  };
+
+  const handleReplayJob = async (id: string) => {
+    try {
+      await api.replayQueueJob(id);
+      loadQueueJobs();
+    } catch (err: any) {
+      alert(`Failed to replay queue job: ${err.message}`);
     }
   };
 
@@ -436,6 +585,7 @@ export function App() {
             { id: 'logs', label: '📜 Logs & Correlation' },
             { id: 'tests', label: '🧪 Test Studio' },
             { id: 'artisan', label: '⚡ Artisan Console' },
+            { id: 'queues', label: '📬 Queue Studio' },
             { id: 'xdebug', label: '🐞 PHP Debugger' },
             { id: 'webhooks', label: '🪝 Webhook Studio' },
             { id: 'streams', label: '📡 Live Streams' },
@@ -565,7 +715,307 @@ export function App() {
                     >
                       {loading ? 'Sending...' : 'Send'}
                     </button>
+
+                    <button
+                      onClick={handleCopyAsCurl}
+                      title="Copy request as executable cURL command"
+                      style={{
+                        padding: '8px 14px',
+                        backgroundColor: 'var(--bg-card)',
+                        color: 'var(--text-primary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '6px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      📋 cURL
+                    </button>
+
+                    <button
+                      onClick={() => setShowImportModal(true)}
+                      title="Import cURL command, Postman collection, or OpenAPI spec"
+                      style={{
+                        padding: '8px 14px',
+                        backgroundColor: 'var(--bg-card)',
+                        color: 'var(--accent)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '6px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      + Import
+                    </button>
+
+                    <button
+                      onClick={() => setShowCookieJar(!showCookieJar)}
+                      title="Inspect and manage local Cookie Jar"
+                      style={{
+                        padding: '8px 14px',
+                        backgroundColor: showCookieJar ? 'rgba(88, 166, 255, 0.2)' : 'var(--bg-card)',
+                        color: 'var(--text-primary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '6px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      🍪 Cookies ({cookies.length})
+                    </button>
                   </div>
+
+                  {/* Cookie Jar Slide-Down Drawer */}
+                  {showCookieJar && (
+                    <div style={{
+                      backgroundColor: 'var(--bg-card)',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border-color)',
+                      padding: '14px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '12px'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <span style={{ fontWeight: 600, fontSize: '13px' }}>🍪 Local Cookie Jar (Module 02)</span>
+                          <span style={{ fontSize: '11px', color: 'var(--text-secondary)', marginLeft: '8px' }}>
+                            Automatically captures Set-Cookie headers and injects matching cookies into outbound requests.
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button
+                            onClick={handleClearCookies}
+                            disabled={cookies.length === 0}
+                            style={{
+                              padding: '4px 10px',
+                              backgroundColor: 'transparent',
+                              color: 'var(--danger)',
+                              border: '1px solid rgba(248, 81, 73, 0.3)',
+                              borderRadius: '4px',
+                              fontSize: '11px',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            Clear Jar
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Add Cookie Form */}
+                      <form onSubmit={handleSaveCookie} style={{ display: 'grid', gridTemplateColumns: '140px 140px 1fr 90px', gap: '8px' }}>
+                        <input
+                          type="text"
+                          value={newCookieDomain}
+                          onChange={(e) => setNewCookieDomain(e.target.value)}
+                          placeholder="Domain (127.0.0.1)"
+                          required
+                          style={{
+                            padding: '6px 8px',
+                            backgroundColor: 'var(--bg-panel)',
+                            color: 'var(--text-primary)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '4px',
+                            fontSize: '12px'
+                          }}
+                        />
+                        <input
+                          type="text"
+                          value={newCookieName}
+                          onChange={(e) => setNewCookieName(e.target.value)}
+                          placeholder="Name (e.g. XSRF-TOKEN)"
+                          required
+                          style={{
+                            padding: '6px 8px',
+                            backgroundColor: 'var(--bg-panel)',
+                            color: 'var(--text-primary)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '4px',
+                            fontSize: '12px'
+                          }}
+                        />
+                        <input
+                          type="text"
+                          value={newCookieValue}
+                          onChange={(e) => setNewCookieValue(e.target.value)}
+                          placeholder="Value"
+                          required
+                          style={{
+                            padding: '6px 8px',
+                            backgroundColor: 'var(--bg-panel)',
+                            color: 'var(--text-primary)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '4px',
+                            fontSize: '12px'
+                          }}
+                        />
+                        <button
+                          type="submit"
+                          style={{
+                            padding: '6px 12px',
+                            backgroundColor: 'var(--accent)',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: '4px',
+                            fontSize: '12px',
+                            fontWeight: 600,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          + Set
+                        </button>
+                      </form>
+
+                      {/* Cookies Table */}
+                      <div style={{ maxHeight: '150px', overflow: 'auto', border: '1px solid var(--border-color)', borderRadius: '4px' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', textAlign: 'left' }}>
+                          <thead style={{ backgroundColor: 'var(--bg-panel)', color: 'var(--text-secondary)' }}>
+                            <tr>
+                              <th style={{ padding: '6px 10px' }}>Domain</th>
+                              <th style={{ padding: '6px 10px' }}>Name</th>
+                              <th style={{ padding: '6px 10px' }}>Value</th>
+                              <th style={{ padding: '6px 10px' }}>Path</th>
+                              <th style={{ padding: '6px 10px' }}>Expires</th>
+                              <th style={{ padding: '6px 10px' }}>Action</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {cookies.length === 0 ? (
+                              <tr>
+                                <td colSpan={6} style={{ padding: '16px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                                  Cookie jar is empty. Send requests that return Set-Cookie headers or add cookies manually.
+                                </td>
+                              </tr>
+                            ) : (
+                              cookies.map((c) => (
+                                <tr key={c.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                  <td style={{ padding: '6px 10px', color: 'var(--text-secondary)' }}>{c.domain}</td>
+                                  <td style={{ padding: '6px 10px', fontWeight: 600, color: 'var(--accent)' }}>{c.name}</td>
+                                  <td style={{ padding: '6px 10px', fontFamily: 'monospace', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {c.value}
+                                  </td>
+                                  <td style={{ padding: '6px 10px', color: 'var(--text-secondary)' }}>{c.path}</td>
+                                  <td style={{ padding: '6px 10px', color: 'var(--text-secondary)' }}>
+                                    {c.expires_at ? new Date(c.expires_at).toLocaleDateString() : 'Session'}
+                                  </td>
+                                  <td style={{ padding: '6px 10px' }}>
+                                    <button
+                                      onClick={() => handleDeleteCookie(c.id)}
+                                      style={{
+                                        backgroundColor: 'transparent',
+                                        color: 'var(--danger)',
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        fontSize: '11px'
+                                      }}
+                                    >
+                                      ✕
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Import Modal */}
+                  {showImportModal && (
+                    <div style={{
+                      position: 'fixed',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      backgroundColor: 'rgba(0, 0, 0, 0.6)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      zIndex: 1000
+                    }}>
+                      <div style={{
+                        width: '550px',
+                        backgroundColor: 'var(--bg-panel)',
+                        borderRadius: '8px',
+                        border: '1px solid var(--border-color)',
+                        padding: '20px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '14px',
+                        boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <h3 style={{ fontSize: '15px', fontWeight: 600 }}>Import Request or Collection</h3>
+                          <button
+                            onClick={() => setShowImportModal(false)}
+                            style={{ backgroundColor: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '16px' }}
+                          >
+                            ✕
+                          </button>
+                        </div>
+
+                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                          Paste a standard cURL command, Postman 2.1 Collection JSON, or OpenAPI 3.x spec to populate API Studio.
+                        </p>
+
+                        <textarea
+                          rows={8}
+                          value={importInput}
+                          onChange={(e) => setImportInput(e.target.value)}
+                          placeholder={'curl -X POST https://api.example.com/v1/users \\\n  -H "Authorization: Bearer token" \\\n  -d \'{"name": "Alice"}\''}
+                          style={{
+                            width: '100%',
+                            padding: '10px',
+                            backgroundColor: 'var(--bg-card)',
+                            color: 'var(--text-primary)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '6px',
+                            fontFamily: 'monospace',
+                            fontSize: '12px',
+                            resize: 'none',
+                            outline: 'none'
+                          }}
+                        />
+
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                          <button
+                            onClick={() => setShowImportModal(false)}
+                            style={{
+                              padding: '8px 16px',
+                              backgroundColor: 'transparent',
+                              color: 'var(--text-secondary)',
+                              border: '1px solid var(--border-color)',
+                              borderRadius: '6px',
+                              fontSize: '12px',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={handleImportRequest}
+                            style={{
+                              padding: '8px 20px',
+                              backgroundColor: 'var(--accent)',
+                              color: '#fff',
+                              border: 'none',
+                              borderRadius: '6px',
+                              fontSize: '12px',
+                              fontWeight: 600,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            Parse & Load
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Request / Response Split */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', flex: 1, gap: '16px', overflow: 'hidden' }}>
@@ -1086,6 +1536,201 @@ export function App() {
                   <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '24px' }}>
                     Select an artisan command and click Execute.
                   </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'queues' && (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '16px', overflow: 'hidden' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h2 style={{ fontSize: '16px', fontWeight: 600 }}>Queue Studio & Job Diagnostics (Module 20)</h2>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Live inspection of background queue jobs, failed payloads, exception stack traces, and safe replay execution.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <button
+                    onClick={loadQueueJobs}
+                    disabled={queueLoading}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: 'var(--bg-card)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {queueLoading ? 'Loading...' : '🔄 Refresh'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Status Filters Bar */}
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600 }}>STATUS FILTER:</span>
+                {['all', 'failed', 'processing', 'completed', 'replayed'].map((st) => (
+                  <button
+                    key={st}
+                    onClick={() => {
+                      setQueueStatusFilter(st);
+                      setTimeout(loadQueueJobs, 10);
+                    }}
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: '4px',
+                      border: '1px solid var(--border-color)',
+                      backgroundColor: queueStatusFilter === st ? 'var(--accent)' : 'var(--bg-card)',
+                      color: queueStatusFilter === st ? '#fff' : 'var(--text-secondary)',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      textTransform: 'capitalize'
+                    }}
+                  >
+                    {st}
+                  </button>
+                ))}
+              </div>
+
+              {/* Queue Jobs List */}
+              <div style={{
+                flex: 1,
+                backgroundColor: 'var(--bg-card)',
+                borderRadius: '6px',
+                border: '1px solid var(--border-color)',
+                overflow: 'auto',
+                padding: '12px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px'
+              }}>
+                {queueJobs.length === 0 ? (
+                  <div style={{ padding: '36px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                    No queue jobs found matching the filter. Background jobs processed by Laravel or Symfony queues will appear here.
+                  </div>
+                ) : (
+                  queueJobs.map((job) => (
+                    <div key={job.id} style={{
+                      padding: '12px 14px',
+                      backgroundColor: 'var(--bg-panel)',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border-color)',
+                      fontSize: '12px'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            fontWeight: 600,
+                            fontSize: '11px',
+                            backgroundColor:
+                              job.status === 'failed' ? 'rgba(248, 81, 73, 0.2)' :
+                              job.status === 'completed' ? 'rgba(63, 185, 80, 0.2)' :
+                              job.status === 'replayed' ? 'rgba(163, 113, 247, 0.2)' : 'rgba(227, 179, 65, 0.2)',
+                            color:
+                              job.status === 'failed' ? 'var(--danger)' :
+                              job.status === 'completed' ? 'var(--success)' :
+                              job.status === 'replayed' ? '#a371f7' : 'var(--warning)',
+                            textTransform: 'uppercase'
+                          }}>
+                            {job.status}
+                          </span>
+                          <span style={{ fontWeight: 600, fontSize: '13px' }}>{job.job_class}</span>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '11px' }}>
+                            ({job.connection}:{job.queue_name})
+                          </span>
+                          {job.attempts > 0 && (
+                            <span style={{ fontSize: '11px', padding: '1px 6px', borderRadius: '3px', backgroundColor: 'var(--bg-card)' }}>
+                              Attempts: {job.attempts}
+                            </span>
+                          )}
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '11px' }}>
+                            {job.failed_at ? `Failed: ${new Date(job.failed_at).toLocaleTimeString()}` : new Date(job.created_at).toLocaleTimeString()}
+                          </span>
+                          <button
+                            onClick={() => handleReplayJob(job.id)}
+                            style={{
+                              padding: '4px 10px',
+                              backgroundColor: 'var(--accent)',
+                              color: '#fff',
+                              border: 'none',
+                              borderRadius: '4px',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            🔄 Replay
+                          </button>
+                        </div>
+                      </div>
+
+                      {job.exception_message && (
+                        <div style={{
+                          margin: '6px 0',
+                          padding: '8px 10px',
+                          borderRadius: '4px',
+                          backgroundColor: 'rgba(248, 81, 73, 0.1)',
+                          color: 'var(--danger)',
+                          fontSize: '11px',
+                          fontFamily: 'monospace'
+                        }}>
+                          <strong>Exception:</strong> {job.exception_message}
+                        </div>
+                      )}
+
+                      {job.exception_trace && (
+                        <details style={{ marginTop: '6px' }}>
+                          <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '11px' }}>
+                            View Stack Trace
+                          </summary>
+                          <pre style={{
+                            margin: '6px 0 0 0',
+                            padding: '8px',
+                            backgroundColor: 'var(--bg-card)',
+                            borderRadius: '4px',
+                            fontSize: '11px',
+                            fontFamily: 'monospace',
+                            whiteSpace: 'pre-wrap',
+                            overflow: 'auto',
+                            maxHeight: '160px'
+                          }}>
+                            {job.exception_trace}
+                          </pre>
+                        </details>
+                      )}
+
+                      {job.payload_json && (
+                        <details style={{ marginTop: '4px' }}>
+                          <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '11px' }}>
+                            View Job Payload
+                          </summary>
+                          <pre style={{
+                            margin: '6px 0 0 0',
+                            padding: '8px',
+                            backgroundColor: 'var(--bg-card)',
+                            borderRadius: '4px',
+                            fontSize: '11px',
+                            fontFamily: 'monospace',
+                            whiteSpace: 'pre-wrap',
+                            overflow: 'auto',
+                            maxHeight: '120px'
+                          }}>
+                            {job.payload_json}
+                          </pre>
+                        </details>
+                      )}
+                    </div>
+                  ))
                 )}
               </div>
             </div>
