@@ -3,9 +3,57 @@ import path from 'path';
 import { runCollection, Collection } from './runner';
 import { generateJUnitReport, TestResult } from './junit';
 import { importOpenApi, importPostman } from './openapi';
+import { runTests } from './test-studio';
+import { executeArtisan } from './artisan';
+import { scanProjectSecurity } from './security-scan';
 
 export async function cli(args: string[]): Promise<number> {
   const command = args[0];
+
+  if (command === 'scan') {
+    const targetDir = args[1] || '.';
+    console.log(`Running Security Diagnostics on: ${path.resolve(targetDir)}...`);
+    const findings = scanProjectSecurity(targetDir);
+    if (findings.length === 0) {
+      console.log('  \x1b[32m✔ No configuration vulnerabilities or exposed keys detected.\x1b[0m');
+      return 0;
+    }
+    for (const f of findings) {
+      const color = f.severity === 'critical' ? '\x1b[31m' : '\x1b[33m';
+      console.log(`  ${color}[${f.severity.toUpperCase()}]\x1b[0m ${f.rule} (${f.file})`);
+      console.log(`    Evidence: ${f.evidence}`);
+      console.log(`    Remediation: ${f.remediation}`);
+    }
+    return findings.some((f) => f.severity === 'critical') ? 1 : 0;
+  }
+
+  if (command === 'test') {
+    const runner = args.includes('--pest') ? 'pest' : 'phpunit';
+    const filterIndex = args.indexOf('--filter');
+    const filter = filterIndex !== -1 ? args[filterIndex + 1] : undefined;
+    console.log(`Running ${runner.toUpperCase()} test suite in isolated process...`);
+    const res = await runTests({ projectPath: '.', runner, filter });
+    console.log(res.output);
+    return res.exitCode;
+  }
+
+  if (command === 'artisan') {
+    const artisanCmd = args[1];
+    if (!artisanCmd) {
+      console.error('Usage: debug-studio artisan <command> [--force]');
+      return 1;
+    }
+    const force = args.includes('--force');
+    const res = await executeArtisan({
+      projectPath: '.',
+      command: artisanCmd,
+      args: args.slice(2).filter((a) => a !== '--force'),
+      forceDestructive: force,
+    });
+    if (res.stdout) console.log(res.stdout);
+    if (res.stderr) console.error(res.stderr);
+    return res.exitCode;
+  }
 
   if (command === 'import') {
     const inputPath = args[1];
@@ -50,9 +98,13 @@ export async function cli(args: string[]): Promise<number> {
 
   const collectionIndex = args.indexOf('run');
   if (collectionIndex === -1 || !args[collectionIndex + 1]) {
+    console.error('PHP Debug Studio CLI (by zoventra)');
     console.error('Usage:');
     console.error('  debug-studio run <collection.json> [--env <env.json>] [--report-junit <report.xml>]');
     console.error('  debug-studio import <spec.json> [--type openapi|postman] --out <collection.json>');
+    console.error('  debug-studio test [--pest] [--filter <pattern>]');
+    console.error('  debug-studio artisan <command> [--force]');
+    console.error('  debug-studio scan [path]');
     return 1;
   }
 
