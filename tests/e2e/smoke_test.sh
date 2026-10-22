@@ -24,6 +24,7 @@ test -f apps/daemon/pkg/store/queue.go && echo "  ✔ Queue diagnostics store fo
 test -f apps/daemon/pkg/executor/http.go && echo "  ✔ Execution engine found"
 test -f apps/daemon/pkg/executor/artisan.go && echo "  ✔ Safe Artisan executor found"
 test -f apps/daemon/pkg/executor/testrunner.go && echo "  ✔ Isolated test runner found"
+test -f apps/daemon/pkg/diagnostics/security.go && echo "  ✔ Security diagnostics scanner found"
 test -f apps/daemon/pkg/ai/ollama.go && echo "  ✔ Local AI Ollama engine found"
 test -f apps/daemon/pkg/dbgp/listener.go && echo "  ✔ DBGp listener found"
 

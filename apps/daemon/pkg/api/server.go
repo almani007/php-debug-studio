@@ -16,6 +16,7 @@ import (
 	"zoventra/php-debug-studio/daemon/pkg/ai"
 	"zoventra/php-debug-studio/daemon/pkg/auth"
 	"zoventra/php-debug-studio/daemon/pkg/dbgp"
+	"zoventra/php-debug-studio/daemon/pkg/diagnostics"
 	"zoventra/php-debug-studio/daemon/pkg/executor"
 	"zoventra/php-debug-studio/daemon/pkg/mock"
 	"zoventra/php-debug-studio/daemon/pkg/runtimes"
@@ -172,6 +173,9 @@ func (s *Server) registerRoutes() {
 
 	// Local-First AI Diagnostics with Ollama (Module 26)
 	s.mux.HandleFunc("/v1/ai/diagnose", s.handleAIDiagnose)
+
+	// Security Diagnostics Scanner (Module 19)
+	s.mux.HandleFunc("/v1/security/audit", s.handleSecurityAudit)
 }
 
 func (s *Server) handleTestRuns(w http.ResponseWriter, r *http.Request) {
@@ -1056,4 +1060,28 @@ func (s *Server) handleAIDiagnose(w http.ResponseWriter, r *http.Request) {
 		"model":    req.Model,
 		"offline":  true,
 	}, nil)
+}
+
+func (s *Server) handleSecurityAudit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		ProjectPath string `json:"project_path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	if req.ProjectPath == "" {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "MISSING_PATH", Message: "project_path is required"})
+		return
+	}
+
+	report := diagnostics.RunSecurityAudit(req.ProjectPath)
+	s.hub.Broadcast("security_audit_completed", "", map[string]interface{}{"findings_count": len(report.Findings)})
+	s.jsonResponse(w, http.StatusOK, report, nil)
 }

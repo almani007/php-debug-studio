@@ -75,4 +75,6 @@ export const api = {
     request<any>(`/queue/jobs/${id}/replay`, { method: 'POST' }),
   diagnoseAI: (data: { context_type?: string; content: string; model?: string }) =>
     request<{ response: string; model: string; offline: boolean }>('/ai/diagnose', { method: 'POST', body: JSON.stringify(data) }),
+  runSecurityAudit: (projectPath: string) =>
+    request<any>('/security/audit', { method: 'POST', body: JSON.stringify({ project_path: projectPath }) }),
 };

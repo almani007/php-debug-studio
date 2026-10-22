@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from './api/client';
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<'api' | 'traces' | 'sql' | 'logs' | 'tests' | 'artisan' | 'queues' | 'xdebug' | 'webhooks' | 'streams' | 'projects'>('api');
+  const [activeTab, setActiveTab] = useState<'api' | 'traces' | 'sql' | 'logs' | 'tests' | 'artisan' | 'queues' | 'security' | 'xdebug' | 'webhooks' | 'streams' | 'projects'>('api');
   const [health, setHealth] = useState<any>(null);
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
@@ -15,6 +15,10 @@ export function App() {
   const [reqBody, setReqBody] = useState<string>('{\n  "name": "Jane Doe"\n}');
   const [response, setResponse] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
+
+  // Security Diagnostics state (Module 19)
+  const [securityReport, setSecurityReport] = useState<any>(null);
+  const [securityLoading, setSecurityLoading] = useState<boolean>(false);
 
   // Cookie Jar state
   const [cookies, setCookies] = useState<any[]>([]);
@@ -133,6 +137,10 @@ export function App() {
         .catch(() => setLogs([]));
     } else if (activeTab === 'queues') {
       loadQueueJobs();
+    } else if (activeTab === 'security') {
+      if (activeProject && !securityReport) {
+        handleRunSecurityAudit();
+      }
     } else if (activeTab === 'api') {
       loadCookies();
     } else if (activeTab === 'xdebug') {
@@ -401,6 +409,22 @@ export function App() {
       setAiResponse(`Error: ${err.message}`);
     } finally {
       setAiLoading(false);
+    }
+  };
+
+  const handleRunSecurityAudit = async () => {
+    if (!activeProject) {
+      alert('Please select or create a project first.');
+      return;
+    }
+    setSecurityLoading(true);
+    try {
+      const res = await api.runSecurityAudit(activeProject.root_path);
+      setSecurityReport(res);
+    } catch (err: any) {
+      alert(`Security audit error: ${err.message}`);
+    } finally {
+      setSecurityLoading(false);
     }
   };
 
@@ -738,6 +762,7 @@ export function App() {
             { id: 'tests', label: '🧪 Test Studio' },
             { id: 'artisan', label: '⚡ Artisan Console' },
             { id: 'queues', label: '📬 Queue Studio' },
+            { id: 'security', label: '🛡️ Security Audit' },
             { id: 'xdebug', label: '🐞 PHP Debugger' },
             { id: 'webhooks', label: '🪝 Webhook Studio' },
             { id: 'streams', label: '📡 Live Streams' },
@@ -1880,6 +1905,146 @@ export function App() {
                             {job.payload_json}
                           </pre>
                         </details>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'security' && (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '16px', overflow: 'hidden' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h2 style={{ fontSize: '16px', fontWeight: 600 }}>Security Diagnostics & Configuration Audit (Module 19)</h2>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Non-destructive checks for secret leaks, risky debug modes, world-readable permissions, and weak keys.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                  {securityReport && (
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <span style={{
+                        padding: '4px 10px',
+                        borderRadius: '4px',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        backgroundColor: 'rgba(248, 81, 73, 0.2)',
+                        color: 'var(--danger)'
+                      }}>
+                        Critical: {securityReport.summary?.CRITICAL || 0}
+                      </span>
+                      <span style={{
+                        padding: '4px 10px',
+                        borderRadius: '4px',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        backgroundColor: 'rgba(227, 179, 65, 0.2)',
+                        color: 'var(--warning)'
+                      }}>
+                        Warning: {securityReport.summary?.WARNING || 0}
+                      </span>
+                      <span style={{
+                        padding: '4px 10px',
+                        borderRadius: '4px',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        backgroundColor: 'rgba(88, 166, 255, 0.2)',
+                        color: 'var(--accent)'
+                      }}>
+                        Info: {securityReport.summary?.INFO || 0}
+                      </span>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={handleRunSecurityAudit}
+                    disabled={securityLoading}
+                    style={{
+                      padding: '8px 18px',
+                      backgroundColor: 'var(--accent)',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {securityLoading ? 'Scanning...' : '🛡️ Run Security Audit'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Security Findings List */}
+              <div style={{
+                flex: 1,
+                backgroundColor: 'var(--bg-card)',
+                borderRadius: '6px',
+                border: '1px solid var(--border-color)',
+                overflow: 'auto',
+                padding: '12px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px'
+              }}>
+                {!securityReport ? (
+                  <div style={{ padding: '36px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                    Click "Run Security Audit" above to run non-destructive security checks against your active project.
+                  </div>
+                ) : securityReport.findings.length === 0 ? (
+                  <div style={{ padding: '36px', textAlign: 'center', color: 'var(--success)', fontSize: '13px' }}>
+                    ✔ No security risks or configuration vulnerabilities detected!
+                  </div>
+                ) : (
+                  securityReport.findings.map((f: any) => (
+                    <div key={f.id} style={{
+                      padding: '12px 14px',
+                      backgroundColor: 'var(--bg-panel)',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border-color)',
+                      fontSize: '12px'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            fontWeight: 600,
+                            fontSize: '11px',
+                            backgroundColor:
+                              f.severity === 'CRITICAL' ? 'rgba(248, 81, 73, 0.2)' :
+                              f.severity === 'WARNING' ? 'rgba(227, 179, 65, 0.2)' : 'rgba(88, 166, 255, 0.2)',
+                            color:
+                              f.severity === 'CRITICAL' ? 'var(--danger)' :
+                              f.severity === 'WARNING' ? 'var(--warning)' : 'var(--accent)'
+                          }}>
+                            {f.severity}
+                          </span>
+                          <span style={{ fontWeight: 600, fontSize: '13px' }}>{f.check}</span>
+                        </div>
+                      </div>
+
+                      <div style={{ color: 'var(--text-primary)', marginTop: '4px', marginBottom: '8px' }}>
+                        {f.description}
+                      </div>
+
+                      <div style={{
+                        padding: '8px 10px',
+                        borderRadius: '4px',
+                        backgroundColor: 'var(--bg-card)',
+                        border: '1px solid var(--border-color)',
+                        fontSize: '11px'
+                      }}>
+                        <strong style={{ color: 'var(--accent)' }}>Remediation:</strong> {f.remediation}
+                      </div>
+
+                      {f.evidence && (
+                        <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
+                          Evidence: {f.evidence}
+                        </div>
                       )}
                     </div>
                   ))
