@@ -1,0 +1,85 @@
+name: Release Distribution
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-daemon:
+    name: Build Daemon (${{ matrix.os }}/${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: darwin
+            arch: arm64
+            binary: php-debug-studio-daemon-darwin-arm64
+          - os: darwin
+            arch: amd64
+            binary: php-debug-studio-daemon-darwin-amd64
+          - os: linux
+            arch: amd64
+            binary: php-debug-studio-daemon-linux-amd64
+          - os: linux
+            arch: arm64
+            binary: php-debug-studio-daemon-linux-arm64
+          - os: windows
+            arch: amd64
+            binary: php-debug-studio-daemon-windows-amd64.exe
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Compile Cross-Platform Daemon
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: '0'
+        run: |
+          cd apps/daemon
+          mkdir -p dist
+          go build -ldflags="-s -w -X main.version=${{ github.ref_name }}" -o dist/${{ matrix.binary }} main.go
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.binary }}
+          path: apps/daemon/dist/${{ matrix.binary }}
+
+  publish-release:
+    name: Create GitHub Release
+    needs: [build-daemon]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-binaries
+
+      - name: Generate SHA256 Checksums
+        run: |
+          cd release-binaries
+          find . -type f -exec sha256sum {} + > SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-binaries/**/*
+            release-binaries/SHA256SUMS.txt
+          draft: false
+          prerelease: false
+          generate_release_notes: true

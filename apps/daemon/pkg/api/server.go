@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zoventra/php-debug-studio/daemon/pkg/ai"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/auth"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/dbgp"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/executor"
@@ -32,6 +33,7 @@ type Server struct {
 	listener    *dbgp.Listener
 	mockServer  *mock.MockServer
 	phpDetector *runtimes.PhpDetector
+	aiClient    *ai.Client
 	mux         *http.ServeMux
 }
 
@@ -65,6 +67,7 @@ func NewServer(s *store.Store, h *ws.Hub, e *executor.Engine, l *dbgp.Listener, 
 		listener:    l,
 		mockServer:  m,
 		phpDetector: runtimes.NewPhpDetector(),
+		aiClient:    ai.NewClient(""),
 		mux:         http.NewServeMux(),
 	}
 	srv.registerRoutes()
@@ -166,6 +169,9 @@ func (s *Server) registerRoutes() {
 	// Queue Diagnostics & Replayer (Module 20)
 	s.mux.HandleFunc("/v1/queue/jobs", s.handleQueueJobs)
 	s.mux.HandleFunc("/v1/queue/jobs/", s.handleQueueJobDetail)
+
+	// Local-First AI Diagnostics with Ollama (Module 26)
+	s.mux.HandleFunc("/v1/ai/diagnose", s.handleAIDiagnose)
 }
 
 func (s *Server) handleTestRuns(w http.ResponseWriter, r *http.Request) {
@@ -1006,4 +1012,48 @@ func VerifySignature(secret string, payload []byte, signature string) bool {
 	mac.Write(payload)
 	expectedMAC := hex.EncodeToString(mac.Sum(nil))
 	return hmac.Equal([]byte(signature), []byte(expectedMAC))
+}
+
+func (s *Server) handleAIDiagnose(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		ContextType string `json:"context_type"`
+		Content     string `json:"content"`
+		Model       string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	if !s.aiClient.IsAvailable() {
+		s.jsonResponse(w, http.StatusServiceUnavailable, nil, &ErrorInfo{
+			Code:    "OLLAMA_OFFLINE",
+			Message: "Local Ollama service is not running on 127.0.0.1:11434. Start Ollama locally with `ollama run llama3.2:3b` to enable local-first AI diagnostics without cloud tracking.",
+		})
+		return
+	}
+
+	var resp string
+	var err error
+	if req.ContextType != "" {
+		resp, err = s.aiClient.Diagnose(req.ContextType, req.Content)
+	} else {
+		resp, err = s.aiClient.Generate(req.Model, req.Content)
+	}
+
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "AI_ERROR", Message: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"response": resp,
+		"model":    req.Model,
+		"offline":  true,
+	}, nil)
 }

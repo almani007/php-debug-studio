@@ -24,6 +24,7 @@ test -f apps/daemon/pkg/store/queue.go && echo "  ✔ Queue diagnostics store fo
 test -f apps/daemon/pkg/executor/http.go && echo "  ✔ Execution engine found"
 test -f apps/daemon/pkg/executor/artisan.go && echo "  ✔ Safe Artisan executor found"
 test -f apps/daemon/pkg/executor/testrunner.go && echo "  ✔ Isolated test runner found"
+test -f apps/daemon/pkg/ai/ollama.go && echo "  ✔ Local AI Ollama engine found"
 test -f apps/daemon/pkg/dbgp/listener.go && echo "  ✔ DBGp listener found"
 
 echo "[3/4] Verifying PHP SDK & Laravel Integration Packages..."
@@ -36,6 +37,7 @@ test -f packages/php-legacy/src/LegacyDebugStudio.php && echo "  ✔ Legacy PHP 
 echo "[4/4] Verifying Frontend and Tooling Packages..."
 test -f apps/web/src/App.tsx && echo "  ✔ Web UI found"
 test -f packages/cli/bin/debug-studio.js && echo "  ✔ CLI runner entrypoint found"
+test -f .github/workflows/release.yml && echo "  ✔ Multi-platform release workflow found"
 test -f docker-compose.yml && echo "  ✔ Docker integration stack found"
 
 echo "=================================================="

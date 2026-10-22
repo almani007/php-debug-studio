@@ -73,4 +73,6 @@ export const api = {
     request<any>('/queue/jobs', { method: 'POST', body: JSON.stringify(job) }),
   replayQueueJob: (id: string) =>
     request<any>(`/queue/jobs/${id}/replay`, { method: 'POST' }),
+  diagnoseAI: (data: { context_type?: string; content: string; model?: string }) =>
+    request<{ response: string; model: string; offline: boolean }>('/ai/diagnose', { method: 'POST', body: JSON.stringify(data) }),
 };

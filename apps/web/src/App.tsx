@@ -51,6 +51,15 @@ export function App() {
   const [queueStatusFilter, setQueueStatusFilter] = useState<string>('all');
   const [queueLoading, setQueueLoading] = useState<boolean>(false);
 
+  // Theme & Accessibility (WCAG 2.1 AA)
+  const [theme, setTheme] = useState<'dark' | 'light' | 'high-contrast'>('dark');
+
+  // Local AI Advisor state (Module 26)
+  const [showAIAdvisor, setShowAIAdvisor] = useState<boolean>(false);
+  const [aiPrompt, setAiPrompt] = useState<string>('How do I optimize an Eloquent query that triggers N+1 problems?');
+  const [aiResponse, setAiResponse] = useState<string>('');
+  const [aiLoading, setAiLoading] = useState<boolean>(false);
+
   // DBGp Debugger state
   const [debugSessions, setDebugSessions] = useState<any[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string>('');
@@ -377,6 +386,62 @@ export function App() {
     }
   };
 
+  const handleRunAIAdvisor = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!aiPrompt.trim()) return;
+    setAiLoading(true);
+    setAiResponse('');
+    try {
+      const res = await api.diagnoseAI({
+        content: aiPrompt,
+        model: 'llama3.2:3b',
+      });
+      setAiResponse(res.response || '(No response generated)');
+    } catch (err: any) {
+      setAiResponse(`Error: ${err.message}`);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  // Keyboard Shortcuts & WCAG 2.1 AA Navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Escape closes modals
+      if (e.key === 'Escape') {
+        setShowImportModal(false);
+        setShowCookieJar(false);
+        setShowAIAdvisor(false);
+      }
+
+      // Cmd+Enter or Ctrl+Enter executes primary action
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        if (activeTab === 'api') {
+          if (apiMode === 'rest') handleSendRequest();
+          else handleExecuteGraphQL();
+        } else if (activeTab === 'tests') {
+          handleRunTests();
+        } else if (activeTab === 'artisan') {
+          handleRunArtisan();
+        }
+      }
+
+      // Cmd+1..9 or Ctrl+1..9 switches tabs
+      if ((e.metaKey || e.ctrlKey) && e.key >= '1' && e.key <= '9') {
+        const tabs: Array<typeof activeTab> = ['api', 'traces', 'sql', 'logs', 'tests', 'artisan', 'queues', 'xdebug', 'webhooks'];
+        const idx = parseInt(e.key, 10) - 1;
+        if (tabs[idx]) {
+          e.preventDefault();
+          setActiveTab(tabs[idx]);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeTab, apiMode, url, method, reqBody, gqlQuery, gqlVariables, selectedProjectId]);
+
   const activeProject = projects.find((p) => p.id === selectedProjectId);
 
   const handleUpdateProjectPhp = async (projectId: string, version: string) => {
@@ -474,8 +539,54 @@ export function App() {
   const standardPhpOptions = ['8.4', '8.3', '8.2', '8.1', '8.0', '7.4'];
   const safeArtisanList = ['about', 'route:list', 'config:show', 'optimize:clear', 'cache:clear', 'queue:failed', 'debug-studio:doctor'];
 
+  const themeStyles: Record<string, React.CSSProperties> = {
+    dark: {
+      '--bg-page': '#0d1117',
+      '--bg-panel': '#161b22',
+      '--bg-card': '#21262d',
+      '--border-color': '#30363d',
+      '--text-primary': '#c9d1d9',
+      '--text-secondary': '#8b949e',
+      '--accent': '#58a6ff',
+      '--danger': '#f85149',
+      '--success': '#3fb950',
+      '--warning': '#d29922',
+    } as any,
+    light: {
+      '--bg-page': '#f6f8fa',
+      '--bg-panel': '#ffffff',
+      '--bg-card': '#ffffff',
+      '--border-color': '#d0d7de',
+      '--text-primary': '#24292f',
+      '--text-secondary': '#57606a',
+      '--accent': '#0969da',
+      '--danger': '#cf222e',
+      '--success': '#1a7f37',
+      '--warning': '#9a6700',
+    } as any,
+    'high-contrast': {
+      '--bg-page': '#000000',
+      '--bg-panel': '#050505',
+      '--bg-card': '#111111',
+      '--border-color': '#ffffff',
+      '--text-primary': '#ffffff',
+      '--text-secondary': '#e6e6e6',
+      '--accent': '#79c0ff',
+      '--danger': '#ff7b72',
+      '--success': '#56d364',
+      '--warning': '#f3e151',
+    } as any,
+  };
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100vh',
+      backgroundColor: 'var(--bg-page)',
+      color: 'var(--text-primary)',
+      ...(themeStyles[theme] || themeStyles.dark)
+    }}>
       {/* Top Header */}
       <header style={{
         display: 'flex',
@@ -497,7 +608,48 @@ export function App() {
           <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>by zoventra</span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {/* Local AI Advisor Trigger */}
+          <button
+            onClick={() => setShowAIAdvisor(true)}
+            title="Open Local-First AI Performance Advisor (Ollama loopback)"
+            style={{
+              padding: '6px 12px',
+              backgroundColor: 'rgba(88, 166, 255, 0.15)',
+              color: 'var(--accent)',
+              border: '1px solid var(--accent)',
+              borderRadius: '6px',
+              fontSize: '12px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            <span>🤖</span>
+            <span>Local AI</span>
+          </button>
+
+          {/* Theme Selector (WCAG 2.1 AA) */}
+          <select
+            value={theme}
+            onChange={(e) => setTheme(e.target.value as any)}
+            title="Color theme mode"
+            style={{
+              padding: '6px 10px',
+              backgroundColor: 'var(--bg-card)',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '6px',
+              fontSize: '12px',
+              cursor: 'pointer'
+            }}
+          >
+            <option value="dark">🌙 Dark</option>
+            <option value="light">☀️ Light</option>
+            <option value="high-contrast">👁️ High Contrast</option>
+          </select>
           {/* Project Selector */}
           <select
             value={selectedProjectId}
@@ -2504,6 +2656,131 @@ export function App() {
           )}
         </main>
       </div>
+
+      {/* Local-First AI Advisor Modal (Module 26) */}
+      {showAIAdvisor && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.65)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            width: '680px',
+            maxHeight: '85vh',
+            backgroundColor: 'var(--bg-panel)',
+            borderRadius: '8px',
+            border: '1px solid var(--border-color)',
+            padding: '20px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '14px',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
+            overflow: 'hidden'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '18px' }}>🤖</span>
+                <h3 style={{ fontSize: '15px', fontWeight: 600 }}>Local AI Diagnostic Advisor</h3>
+                <span style={{
+                  fontSize: '11px',
+                  padding: '2px 8px',
+                  borderRadius: '10px',
+                  backgroundColor: 'rgba(63, 185, 80, 0.15)',
+                  color: 'var(--success)'
+                }}>
+                  Zero Cloud Tracking • 127.0.0.1:11434
+                </span>
+              </div>
+              <button
+                onClick={() => setShowAIAdvisor(false)}
+                style={{ backgroundColor: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '16px' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
+              Queries your local Ollama LLM (<code style={{ color: 'var(--accent)' }}>llama3.2:3b</code>) to explain slow queries, diagnose N+1 problems, or propose Eloquent optimizations safely on your machine.
+            </p>
+
+            <form onSubmit={handleRunAIAdvisor} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <textarea
+                rows={4}
+                value={aiPrompt}
+                onChange={(e) => setAiPrompt(e.target.value)}
+                placeholder="Paste an EXPLAIN query plan, SQL query, or error message to diagnose..."
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  backgroundColor: 'var(--bg-card)',
+                  color: 'var(--text-primary)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '6px',
+                  fontFamily: 'monospace',
+                  fontSize: '12px',
+                  resize: 'none',
+                  outline: 'none'
+                }}
+              />
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                  Tip: Press <kbd style={{ padding: '2px 4px', backgroundColor: 'var(--bg-card)', borderRadius: '3px' }}>Esc</kbd> to close anytime.
+                </span>
+
+                <button
+                  type="submit"
+                  disabled={aiLoading}
+                  style={{
+                    padding: '8px 20px',
+                    backgroundColor: 'var(--accent)',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  {aiLoading ? 'Thinking Locally...' : '⚡ Generate Diagnosis'}
+                </button>
+              </div>
+            </form>
+
+            <div style={{
+              flex: 1,
+              backgroundColor: 'var(--bg-card)',
+              borderRadius: '6px',
+              border: '1px solid var(--border-color)',
+              padding: '12px',
+              overflow: 'auto',
+              minHeight: '140px',
+              maxHeight: '260px'
+            }}>
+              <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                DIAGNOSIS & RECOMMENDATION
+              </div>
+              <pre style={{
+                margin: 0,
+                fontFamily: 'monospace',
+                fontSize: '12px',
+                color: 'var(--text-primary)',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word'
+              }}>
+                {aiResponse || '// Run diagnosis above to see local AI performance analysis'}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
