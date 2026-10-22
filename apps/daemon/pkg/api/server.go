@@ -108,6 +108,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/traces", s.handleTraces)
 	s.mux.HandleFunc("/v1/traces/", s.handleTraceDetail)
 	s.mux.HandleFunc("/v1/debug/sessions", s.handleDebugSessions)
+	s.mux.HandleFunc("/v1/debug/sessions/", s.handleDebugSessionAction)
 	s.mux.HandleFunc("/v1/events/stream", s.hub.HandleWebSocket)
 
 	// Webhook endpoint
@@ -150,6 +151,44 @@ func (s *Server) registerRoutes() {
 
 	// SQL Analytics & Slow Query Ranking (Module 13)
 	s.mux.HandleFunc("/v1/sql/analytics", s.handleSQLAnalytics)
+
+	// Test Studio (Module 17)
+	s.mux.HandleFunc("/v1/tests/runs", s.handleTestRuns)
+
+	// Safe Artisan Runner (Module 18)
+	s.mux.HandleFunc("/v1/artisan/run", s.handleArtisanRun)
+}
+
+func (s *Server) handleTestRuns(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req executor.TestRunRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	res := executor.RunPHPTests(req)
+	s.jsonResponse(w, http.StatusOK, res, nil)
+}
+
+func (s *Server) handleArtisanRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req executor.ArtisanRunRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	res := executor.RunArtisan(req)
+	s.jsonResponse(w, http.StatusOK, res, nil)
 }
 
 func (s *Server) handleSQLAnalytics(w http.ResponseWriter, r *http.Request) {
@@ -665,6 +704,99 @@ func (s *Server) handleTraceDetail(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDebugSessions(w http.ResponseWriter, r *http.Request) {
 	sessions := s.listener.GetSessions()
 	s.jsonResponse(w, http.StatusOK, sessions, nil)
+}
+
+func (s *Server) handleDebugSessionAction(w http.ResponseWriter, r *http.Request) {
+	// Pattern: /v1/debug/sessions/{id}/{action} or /v1/debug/sessions/{id}
+	path := strings.TrimPrefix(r.URL.Path, "/v1/debug/sessions/")
+	parts := strings.Split(path, "/")
+	sessionID := parts[0]
+	if sessionID == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	session := s.listener.GetSession(sessionID)
+	if session == nil {
+		s.jsonResponse(w, http.StatusNotFound, nil, &ErrorInfo{Code: "NOT_FOUND", Message: "Debug session not found or already terminated"})
+		return
+	}
+
+	if len(parts) == 1 && r.Method == http.MethodGet {
+		s.jsonResponse(w, http.StatusOK, session, nil)
+		return
+	}
+
+	if len(parts) < 2 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	action := parts[1]
+	switch action {
+	case "step_into":
+		if err := session.StepInto(); err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "STEP_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, map[string]string{"status": "ok", "action": "step_into"}, nil)
+
+	case "step_over":
+		if err := session.StepOver(); err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "STEP_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, map[string]string{"status": "ok", "action": "step_over"}, nil)
+
+	case "step_out":
+		if err := session.StepOut(); err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "STEP_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, map[string]string{"status": "ok", "action": "step_out"}, nil)
+
+	case "continue":
+		if err := session.Continue(); err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "RUN_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, map[string]string{"status": "ok", "action": "continue"}, nil)
+
+	case "stop":
+		if err := session.Stop(); err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "STOP_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, map[string]string{"status": "ok", "action": "stop"}, nil)
+
+	case "eval":
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Expression string `json:"expression"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+			return
+		}
+		if err := session.Eval(req.Expression); err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "EVAL_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, map[string]interface{}{"status": "ok", "expression": req.Expression, "result": session.LastEval}, nil)
+
+	case "stack":
+		if err := session.StackGet(); err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "STACK_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, session.Frames, nil)
+
+	default:
+		w.WriteHeader(http.StatusNotFound)
+	}
 }
 
 func (s *Server) handleIncomingWebhook(w http.ResponseWriter, r *http.Request) {

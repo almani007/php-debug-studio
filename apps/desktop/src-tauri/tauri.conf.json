@@ -3,7 +3,7 @@
     "beforeDevCommand": "pnpm --filter @zoventra/php-debug-studio-web dev",
     "beforeBuildCommand": "pnpm --filter @zoventra/php-debug-studio-web build",
     "devPath": "http://localhost:3000",
-    "distDir": "../web/dist"
+    "distDir": "../../web/dist"
   },
   "package": {
     "productName": "PHP Debug Studio",

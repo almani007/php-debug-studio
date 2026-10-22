@@ -2,23 +2,53 @@ import React, { useState, useEffect } from 'react';
 import { api } from './api/client';
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<'api' | 'traces' | 'sql' | 'logs' | 'xdebug' | 'webhooks' | 'projects'>('api');
+  const [activeTab, setActiveTab] = useState<'api' | 'traces' | 'sql' | 'logs' | 'tests' | 'artisan' | 'xdebug' | 'webhooks' | 'streams' | 'projects'>('api');
   const [health, setHealth] = useState<any>(null);
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
   const [phpRuntimes, setPhpRuntimes] = useState<Array<{ version: string; binary_path: string; is_default: boolean }>>([]);
 
   // API Studio state
+  const [apiMode, setApiMode] = useState<'rest' | 'graphql'>('rest');
   const [method, setMethod] = useState<'GET' | 'POST' | 'PUT' | 'DELETE'>('GET');
   const [url, setUrl] = useState<string>('http://127.0.0.1:8000/api/users');
   const [reqBody, setReqBody] = useState<string>('{\n  "name": "Jane Doe"\n}');
   const [response, setResponse] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
-  // Traces & SQL state
+  // GraphQL state
+  const [gqlEndpoint, setGqlEndpoint] = useState<string>('http://127.0.0.1:8000/graphql');
+  const [gqlQuery, setGqlQuery] = useState<string>('query GetUsers {\n  users {\n    id\n    name\n    email\n  }\n}');
+  const [gqlVariables, setGqlVariables] = useState<string>('{}');
+  const [gqlResponse, setGqlResponse] = useState<any>(null);
+  const [gqlLoading, setGqlLoading] = useState<boolean>(false);
+
+  // Traces, SQL & Logs state
   const [traces, setTraces] = useState<any[]>([]);
   const [sqlAnalytics, setSqlAnalytics] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
+
+  // Test Studio & Artisan state
+  const [testOutput, setTestOutput] = useState<any>(null);
+  const [testLoading, setTestLoading] = useState<boolean>(false);
+  const [artisanCmd, setArtisanCmd] = useState<string>('about');
+  const [artisanOutput, setArtisanOutput] = useState<any>(null);
+  const [artisanLoading, setArtisanLoading] = useState<boolean>(false);
+
+  // DBGp Debugger state
+  const [debugSessions, setDebugSessions] = useState<any[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string>('');
+  const [breakpoints, setBreakpoints] = useState<any[]>([]);
+  const [newBpFile, setNewBpFile] = useState<string>('/var/www/html/app/Http/Controllers/UserController.php');
+  const [newBpLine, setNewBpLine] = useState<number>(25);
+  const [debugEvalExpr, setDebugEvalExpr] = useState<string>('$_SERVER');
+  const [evalResult, setEvalResult] = useState<string>('');
+  const [debugActionLoading, setDebugActionLoading] = useState<boolean>(false);
+
+  // Live Streams state
+  const [streamEvents, setStreamEvents] = useState<any[]>([]);
+  const [streamConnected, setStreamConnected] = useState<boolean>(false);
+  const [streamFilter, setStreamFilter] = useState<string>('all');
 
   // Project form state
   const [newProjectName, setNewProjectName] = useState<string>('');
@@ -76,8 +106,127 @@ export function App() {
       api.getLogs(selectedProjectId)
         .then((data) => setLogs(data || []))
         .catch(() => setLogs([]));
+    } else if (activeTab === 'xdebug') {
+      loadDebugSessions();
+      loadBreakpoints();
+    } else if (activeTab === 'streams') {
+      const ws = new WebSocket('ws://127.0.0.1:8765/v1/events/stream');
+      ws.onopen = () => setStreamConnected(true);
+      ws.onclose = () => setStreamConnected(false);
+      ws.onerror = () => setStreamConnected(false);
+      ws.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          setStreamEvents((prev) => [data, ...prev].slice(0, 200));
+        } catch {
+          setStreamEvents((prev) => [{ topic: 'raw', payload: e.data, timestamp: new Date().toISOString() }, ...prev].slice(0, 200));
+        }
+      };
+      return () => {
+        ws.close();
+      };
     }
   }, [activeTab, selectedProjectId]);
+
+  const loadDebugSessions = () => {
+    api.getDebugSessions()
+      .then((data) => {
+        setDebugSessions(data || []);
+        if (data && data.length > 0 && !selectedSessionId) {
+          setSelectedSessionId(data[0].id);
+        }
+      })
+      .catch(() => setDebugSessions([]));
+  };
+
+  const loadBreakpoints = () => {
+    api.getBreakpoints(selectedProjectId)
+      .then((data) => setBreakpoints(data || []))
+      .catch(() => setBreakpoints([]));
+  };
+
+  const handleAddBreakpoint = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newBpFile || !newBpLine) return;
+    try {
+      await api.createBreakpoint({
+        project_id: selectedProjectId || 'default',
+        file_uri: newBpFile,
+        line_number: Number(newBpLine),
+        type: 'line',
+        enabled: true,
+      });
+      loadBreakpoints();
+    } catch (err: any) {
+      alert(`Failed to add breakpoint: ${err.message}`);
+    }
+  };
+
+  const handleDeleteBreakpoint = async (id: string) => {
+    try {
+      await api.deleteBreakpoint(id);
+      loadBreakpoints();
+    } catch (err: any) {
+      alert(`Failed to delete breakpoint: ${err.message}`);
+    }
+  };
+
+  const handleDebugAction = async (action: 'step_into' | 'step_over' | 'step_out' | 'continue' | 'stop') => {
+    if (!selectedSessionId) return;
+    setDebugActionLoading(true);
+    try {
+      if (action === 'step_into') await api.stepInto(selectedSessionId);
+      else if (action === 'step_over') await api.stepOver(selectedSessionId);
+      else if (action === 'step_out') await api.stepOut(selectedSessionId);
+      else if (action === 'continue') await api.continueDebug(selectedSessionId);
+      else if (action === 'stop') await api.stopDebug(selectedSessionId);
+      setTimeout(loadDebugSessions, 300);
+    } catch (err: any) {
+      alert(`Debug action error: ${err.message}`);
+    } finally {
+      setDebugActionLoading(false);
+    }
+  };
+
+  const handleDebugEval = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedSessionId || !debugEvalExpr) return;
+    setDebugActionLoading(true);
+    try {
+      const res = await api.evalDebug(selectedSessionId, debugEvalExpr);
+      setEvalResult(res.result || '(executed)');
+    } catch (err: any) {
+      setEvalResult(`Error: ${err.message}`);
+    } finally {
+      setDebugActionLoading(false);
+    }
+  };
+
+  const handleExecuteGraphQL = async () => {
+    setGqlLoading(true);
+    setGqlResponse(null);
+    try {
+      let vars = {};
+      try {
+        vars = JSON.parse(gqlVariables || '{}');
+      } catch (err: any) {
+        alert('Variables must be valid JSON: ' + err.message);
+        setGqlLoading(false);
+        return;
+      }
+
+      const res = await api.executeGraphQL({
+        endpoint: gqlEndpoint,
+        query: gqlQuery,
+        variables: vars,
+      });
+      setGqlResponse(res);
+    } catch (err: any) {
+      setGqlResponse({ error: err.message });
+    } finally {
+      setGqlLoading(false);
+    }
+  };
 
   const activeProject = projects.find((p) => p.id === selectedProjectId);
 
@@ -131,7 +280,50 @@ export function App() {
     }
   };
 
+  const handleRunTests = async () => {
+    if (!activeProject) {
+      alert('Please select or create a project first.');
+      return;
+    }
+    setTestLoading(true);
+    setTestOutput(null);
+    try {
+      const res = await api.runTests({
+        project_path: activeProject.root_path,
+        php_binary_path: activeProject.php_binary_path || undefined,
+        runner: 'phpunit',
+      });
+      setTestOutput(res);
+    } catch (err: any) {
+      setTestOutput({ output: err.message, passed: false, exit_code: 1 });
+    } finally {
+      setTestLoading(false);
+    }
+  };
+
+  const handleRunArtisan = async () => {
+    if (!activeProject) {
+      alert('Please select or create a project first.');
+      return;
+    }
+    setArtisanLoading(true);
+    setArtisanOutput(null);
+    try {
+      const res = await api.runArtisan({
+        project_path: activeProject.root_path,
+        command: artisanCmd,
+        php_binary_path: activeProject.php_binary_path || undefined,
+      });
+      setArtisanOutput(res);
+    } catch (err: any) {
+      setArtisanOutput({ stderr: err.message, exit_code: 1 });
+    } finally {
+      setArtisanLoading(false);
+    }
+  };
+
   const standardPhpOptions = ['8.4', '8.3', '8.2', '8.1', '8.0', '7.4'];
+  const safeArtisanList = ['about', 'route:list', 'config:show', 'optimize:clear', 'cache:clear', 'queue:failed', 'debug-studio:doctor'];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
@@ -242,8 +434,11 @@ export function App() {
             { id: 'traces', label: '🌊 Traces & Waterfall' },
             { id: 'sql', label: '🗄️ SQL Studio' },
             { id: 'logs', label: '📜 Logs & Correlation' },
+            { id: 'tests', label: '🧪 Test Studio' },
+            { id: 'artisan', label: '⚡ Artisan Console' },
             { id: 'xdebug', label: '🐞 PHP Debugger' },
             { id: 'webhooks', label: '🪝 Webhook Studio' },
+            { id: 'streams', label: '📡 Live Streams' },
             { id: 'projects', label: '📁 Projects & PHP Runtimes' },
           ].map((tab) => (
             <button
@@ -272,127 +467,329 @@ export function App() {
         <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '16px' }}>
           {activeTab === 'api' && (
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '16px' }}>
-              {/* Request Bar */}
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <select
-                  value={method}
-                  onChange={(e) => setMethod(e.target.value as any)}
-                  style={{
-                    padding: '8px 12px',
-                    backgroundColor: 'var(--bg-card)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '6px',
-                    fontWeight: 'bold'
-                  }}
-                >
-                  <option value="GET">GET</option>
-                  <option value="POST">POST</option>
-                  <option value="PUT">PUT</option>
-                  <option value="DELETE">DELETE</option>
-                </select>
-
-                <input
-                  type="text"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  placeholder="https://localhost:8000/api/endpoint"
-                  style={{
-                    flex: 1,
-                    padding: '8px 12px',
-                    backgroundColor: 'var(--bg-card)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '6px',
-                    fontSize: '13px'
-                  }}
-                />
-
-                <button
-                  onClick={handleSendRequest}
-                  disabled={loading}
-                  style={{
-                    padding: '8px 24px',
-                    backgroundColor: 'var(--accent)',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: '6px',
-                    fontWeight: 600,
-                    cursor: 'pointer'
-                  }}
-                >
-                  {loading ? 'Sending...' : 'Send'}
-                </button>
-              </div>
-
-              {/* Request / Response Split */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', flex: 1, gap: '16px', overflow: 'hidden' }}>
-                {/* Request Editor */}
+              {/* REST / GraphQL Switcher */}
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                 <div style={{
                   display: 'flex',
-                  flexDirection: 'column',
                   backgroundColor: 'var(--bg-card)',
                   borderRadius: '6px',
                   border: '1px solid var(--border-color)',
-                  overflow: 'hidden'
+                  padding: '2px',
                 }}>
-                  <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-color)', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                    REQUEST BODY (JSON)
-                  </div>
-                  <textarea
-                    value={reqBody}
-                    onChange={(e) => setReqBody(e.target.value)}
+                  <button
+                    onClick={() => setApiMode('rest')}
                     style={{
-                      flex: 1,
-                      backgroundColor: 'transparent',
-                      color: 'var(--text-primary)',
+                      padding: '6px 14px',
+                      borderRadius: '4px',
                       border: 'none',
-                      padding: '12px',
-                      fontFamily: 'monospace',
-                      fontSize: '13px',
-                      resize: 'none',
-                      outline: 'none'
+                      backgroundColor: apiMode === 'rest' ? 'var(--accent)' : 'transparent',
+                      color: apiMode === 'rest' ? '#fff' : 'var(--text-secondary)',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
                     }}
-                  />
+                  >
+                    REST HTTP
+                  </button>
+                  <button
+                    onClick={() => setApiMode('graphql')}
+                    style={{
+                      padding: '6px 14px',
+                      borderRadius: '4px',
+                      border: 'none',
+                      backgroundColor: apiMode === 'graphql' ? 'var(--accent)' : 'transparent',
+                      color: apiMode === 'graphql' ? '#fff' : 'var(--text-secondary)',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    GraphQL
+                  </button>
                 </div>
-
-                {/* Response Inspector */}
-                <div style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  backgroundColor: 'var(--bg-card)',
-                  borderRadius: '6px',
-                  border: '1px solid var(--border-color)',
-                  overflow: 'hidden'
-                }}>
-                  <div style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    padding: '8px 12px',
-                    borderBottom: '1px solid var(--border-color)',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    color: 'var(--text-secondary)'
-                  }}>
-                    <span>RESPONSE</span>
-                    {response && (
-                      <span style={{ color: response.status_code >= 200 && response.status_code < 300 ? 'var(--success)' : 'var(--danger)' }}>
-                        Status: {response.status_code} ({response.duration_ms} ms)
-                      </span>
-                    )}
-                  </div>
-                  <pre style={{
-                    flex: 1,
-                    padding: '12px',
-                    overflow: 'auto',
-                    fontFamily: 'monospace',
-                    fontSize: '12px',
-                    color: response?.error ? 'var(--danger)' : 'var(--text-primary)'
-                  }}>
-                    {response ? (response.body || response.error || 'No body returned') : '// Hit Send to execute request'}
-                  </pre>
-                </div>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                  {apiMode === 'rest' ? 'Standard REST endpoint testing with W3C traceparent injection' : 'GraphQL query & mutation composer with variable bindings'}
+                </span>
               </div>
+
+              {apiMode === 'rest' ? (
+                <>
+                  {/* Request Bar */}
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <select
+                      value={method}
+                      onChange={(e) => setMethod(e.target.value as any)}
+                      style={{
+                        padding: '8px 12px',
+                        backgroundColor: 'var(--bg-card)',
+                        color: 'var(--text-primary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '6px',
+                        fontWeight: 'bold'
+                      }}
+                    >
+                      <option value="GET">GET</option>
+                      <option value="POST">POST</option>
+                      <option value="PUT">PUT</option>
+                      <option value="DELETE">DELETE</option>
+                    </select>
+
+                    <input
+                      type="text"
+                      value={url}
+                      onChange={(e) => setUrl(e.target.value)}
+                      placeholder="https://localhost:8000/api/endpoint"
+                      style={{
+                        flex: 1,
+                        padding: '8px 12px',
+                        backgroundColor: 'var(--bg-card)',
+                        color: 'var(--text-primary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '6px',
+                        fontSize: '13px'
+                      }}
+                    />
+
+                    <button
+                      onClick={handleSendRequest}
+                      disabled={loading}
+                      style={{
+                        padding: '8px 24px',
+                        backgroundColor: 'var(--accent)',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '6px',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {loading ? 'Sending...' : 'Send'}
+                    </button>
+                  </div>
+
+                  {/* Request / Response Split */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', flex: 1, gap: '16px', overflow: 'hidden' }}>
+                    {/* Request Editor */}
+                    <div style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      backgroundColor: 'var(--bg-card)',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border-color)',
+                      overflow: 'hidden'
+                    }}>
+                      <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-color)', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        REQUEST BODY (JSON)
+                      </div>
+                      <textarea
+                        value={reqBody}
+                        onChange={(e) => setReqBody(e.target.value)}
+                        style={{
+                          flex: 1,
+                          backgroundColor: 'transparent',
+                          color: 'var(--text-primary)',
+                          border: 'none',
+                          padding: '12px',
+                          fontFamily: 'monospace',
+                          fontSize: '13px',
+                          resize: 'none',
+                          outline: 'none'
+                        }}
+                      />
+                    </div>
+
+                    {/* Response Inspector */}
+                    <div style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      backgroundColor: 'var(--bg-card)',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border-color)',
+                      overflow: 'hidden'
+                    }}>
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        padding: '8px 12px',
+                        borderBottom: '1px solid var(--border-color)',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        color: 'var(--text-secondary)'
+                      }}>
+                        <span>RESPONSE</span>
+                        {response && (
+                          <span style={{ color: response.status_code >= 200 && response.status_code < 300 ? 'var(--success)' : 'var(--danger)' }}>
+                            Status: {response.status_code} ({response.duration_ms} ms)
+                          </span>
+                        )}
+                      </div>
+                      <pre style={{
+                        flex: 1,
+                        padding: '12px',
+                        overflow: 'auto',
+                        fontFamily: 'monospace',
+                        fontSize: '12px',
+                        color: response?.error ? 'var(--danger)' : 'var(--text-primary)'
+                      }}>
+                        {response ? (response.body || response.error || 'No body returned') : '// Hit Send to execute request'}
+                      </pre>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* GraphQL Bar */}
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: '0 12px',
+                      backgroundColor: 'var(--bg-card)',
+                      color: 'var(--accent)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      fontWeight: 'bold',
+                    }}>
+                      POST (GQL)
+                    </div>
+
+                    <input
+                      type="text"
+                      value={gqlEndpoint}
+                      onChange={(e) => setGqlEndpoint(e.target.value)}
+                      placeholder="http://127.0.0.1:8000/graphql"
+                      style={{
+                        flex: 1,
+                        padding: '8px 12px',
+                        backgroundColor: 'var(--bg-card)',
+                        color: 'var(--text-primary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '6px',
+                        fontSize: '13px'
+                      }}
+                    />
+
+                    <button
+                      onClick={handleExecuteGraphQL}
+                      disabled={gqlLoading}
+                      style={{
+                        padding: '8px 24px',
+                        backgroundColor: 'var(--accent)',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '6px',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {gqlLoading ? 'Executing...' : 'Run Query'}
+                    </button>
+                  </div>
+
+                  {/* GraphQL Split */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', flex: 1, gap: '16px', overflow: 'hidden' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflow: 'hidden' }}>
+                      {/* Query Editor */}
+                      <div style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        flex: 2,
+                        backgroundColor: 'var(--bg-card)',
+                        borderRadius: '6px',
+                        border: '1px solid var(--border-color)',
+                        overflow: 'hidden'
+                      }}>
+                        <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-color)', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                          GRAPHQL QUERY / MUTATION
+                        </div>
+                        <textarea
+                          value={gqlQuery}
+                          onChange={(e) => setGqlQuery(e.target.value)}
+                          style={{
+                            flex: 1,
+                            backgroundColor: 'transparent',
+                            color: 'var(--text-primary)',
+                            border: 'none',
+                            padding: '12px',
+                            fontFamily: 'monospace',
+                            fontSize: '13px',
+                            resize: 'none',
+                            outline: 'none'
+                          }}
+                        />
+                      </div>
+
+                      {/* Variables Editor */}
+                      <div style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        flex: 1,
+                        backgroundColor: 'var(--bg-card)',
+                        borderRadius: '6px',
+                        border: '1px solid var(--border-color)',
+                        overflow: 'hidden'
+                      }}>
+                        <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-color)', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                          QUERY VARIABLES (JSON)
+                        </div>
+                        <textarea
+                          value={gqlVariables}
+                          onChange={(e) => setGqlVariables(e.target.value)}
+                          style={{
+                            flex: 1,
+                            backgroundColor: 'transparent',
+                            color: 'var(--text-primary)',
+                            border: 'none',
+                            padding: '12px',
+                            fontFamily: 'monospace',
+                            fontSize: '13px',
+                            resize: 'none',
+                            outline: 'none'
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* GraphQL Response */}
+                    <div style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      backgroundColor: 'var(--bg-card)',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border-color)',
+                      overflow: 'hidden'
+                    }}>
+                      <div style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        padding: '8px 12px',
+                        borderBottom: '1px solid var(--border-color)',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        color: 'var(--text-secondary)'
+                      }}>
+                        <span>GRAPHQL RESULT</span>
+                        {gqlResponse && (
+                          <span style={{ color: gqlResponse.errors ? 'var(--danger)' : 'var(--success)' }}>
+                            {gqlResponse.errors ? 'Errors' : 'Success'} {gqlResponse.duration_ms ? `(${gqlResponse.duration_ms} ms)` : ''}
+                          </span>
+                        )}
+                      </div>
+                      <pre style={{
+                        flex: 1,
+                        padding: '12px',
+                        overflow: 'auto',
+                        fontFamily: 'monospace',
+                        fontSize: '12px',
+                        color: gqlResponse?.errors ? 'var(--danger)' : 'var(--text-primary)'
+                      }}>
+                        {gqlResponse ? JSON.stringify(gqlResponse, null, 2) : '// Run query to see GraphQL JSON response'}
+                      </pre>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           )}
 
@@ -564,19 +961,560 @@ export function App() {
             </div>
           )}
 
-          {activeTab === 'xdebug' && (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '12px' }}>
-              <h2 style={{ fontSize: '16px', fontWeight: 600 }}>PHP DBGp Breakpoint Debugger</h2>
+          {activeTab === 'tests' && (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h2 style={{ fontSize: '16px', fontWeight: 600 }}>Test Studio (Module 17)</h2>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Runs PHPUnit / Pest tests in an isolated child process using the project's configured PHP binary.
+                  </p>
+                </div>
+                <button
+                  onClick={handleRunTests}
+                  disabled={testLoading}
+                  style={{
+                    padding: '8px 20px',
+                    backgroundColor: 'var(--accent)',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  {testLoading ? 'Running Tests...' : '▶ Run PHPUnit Suite'}
+                </button>
+              </div>
+
               <div style={{
-                padding: '12px 16px',
-                borderRadius: '6px',
+                flex: 1,
                 backgroundColor: 'var(--bg-card)',
+                borderRadius: '6px',
                 border: '1px solid var(--border-color)',
+                padding: '16px',
+                overflow: 'auto',
+                fontFamily: 'monospace',
                 fontSize: '13px'
               }}>
-                <div><strong>DBGp Bridge:</strong> Listening on <code>127.0.0.1:9003</code></div>
-                <div style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>
-                  Configure your <code>php.ini</code> with <code>xdebug.mode=debug</code> and <code>xdebug.client_port=9003</code>.
+                {testOutput ? (
+                  <div>
+                    <div style={{ marginBottom: '12px', display: 'flex', gap: '12px', alignItems: 'center' }}>
+                      <span style={{
+                        padding: '4px 8px',
+                        borderRadius: '4px',
+                        fontWeight: 600,
+                        backgroundColor: testOutput.passed ? 'rgba(63, 185, 80, 0.15)' : 'rgba(248, 81, 73, 0.15)',
+                        color: testOutput.passed ? 'var(--success)' : 'var(--danger)'
+                      }}>
+                        {testOutput.passed ? 'PASSED' : 'FAILED'} (Exit code: {testOutput.exit_code})
+                      </span>
+                      <span style={{ color: 'var(--text-secondary)' }}>Duration: {testOutput.duration_ms} ms</span>
+                    </div>
+                    <pre style={{ whiteSpace: 'pre-wrap' }}>{testOutput.output}</pre>
+                  </div>
+                ) : (
+                  <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '24px' }}>
+                    Click "Run PHPUnit Suite" to execute test cases.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'artisan' && (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '16px' }}>
+              <div>
+                <h2 style={{ fontSize: '16px', fontWeight: 600 }}>Artisan Console (Module 18)</h2>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                  Safe execution of permitted artisan commands with destructive command protection.
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <select
+                  value={artisanCmd}
+                  onChange={(e) => setArtisanCmd(e.target.value)}
+                  style={{
+                    padding: '8px 12px',
+                    backgroundColor: 'var(--bg-card)',
+                    color: 'var(--text-primary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '6px',
+                    fontSize: '13px',
+                    fontWeight: 600
+                  }}
+                >
+                  {safeArtisanList.map((cmd) => (
+                    <option key={cmd} value={cmd}>php artisan {cmd}</option>
+                  ))}
+                </select>
+
+                <button
+                  onClick={handleRunArtisan}
+                  disabled={artisanLoading}
+                  style={{
+                    padding: '8px 20px',
+                    backgroundColor: 'var(--accent)',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  {artisanLoading ? 'Running...' : 'Execute'}
+                </button>
+              </div>
+
+              <div style={{
+                flex: 1,
+                backgroundColor: 'var(--bg-card)',
+                borderRadius: '6px',
+                border: '1px solid var(--border-color)',
+                padding: '16px',
+                overflow: 'auto',
+                fontFamily: 'monospace',
+                fontSize: '13px'
+              }}>
+                {artisanOutput ? (
+                  <div>
+                    {artisanOutput.stdout && <pre style={{ whiteSpace: 'pre-wrap' }}>{artisanOutput.stdout}</pre>}
+                    {artisanOutput.stderr && <pre style={{ whiteSpace: 'pre-wrap', color: 'var(--danger)' }}>{artisanOutput.stderr}</pre>}
+                  </div>
+                ) : (
+                  <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '24px' }}>
+                    Select an artisan command and click Execute.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'xdebug' && (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '16px', overflow: 'hidden' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h2 style={{ fontSize: '16px', fontWeight: 600 }}>PHP DBGp Breakpoint Debugger (Module 10)</h2>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Step-by-step interactive Xdebug 3 debugger with call-stack inspection, expression evaluation, and breakpoint management.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <div style={{
+                    fontSize: '11px',
+                    padding: '4px 8px',
+                    borderRadius: '4px',
+                    backgroundColor: 'rgba(88, 166, 255, 0.15)',
+                    color: 'var(--accent)',
+                    border: '1px solid rgba(88, 166, 255, 0.3)'
+                  }}>
+                    DBGp: 127.0.0.1:9003
+                  </div>
+                  <button
+                    onClick={loadDebugSessions}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: 'var(--bg-card)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    🔄 Refresh
+                  </button>
+                </div>
+              </div>
+
+              {/* Session Selector & Stepping Toolbar */}
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '10px 14px',
+                backgroundColor: 'var(--bg-card)',
+                borderRadius: '6px',
+                border: '1px solid var(--border-color)',
+                gap: '12px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                    ACTIVE SESSION:
+                  </label>
+                  <select
+                    value={selectedSessionId}
+                    onChange={(e) => setSelectedSessionId(e.target.value)}
+                    style={{
+                      padding: '6px 10px',
+                      backgroundColor: 'var(--bg-panel)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      flex: 1,
+                      maxWidth: '380px'
+                    }}
+                  >
+                    {debugSessions.length === 0 ? (
+                      <option value="">No active Xdebug connection (trigger an HTTP request)</option>
+                    ) : (
+                      debugSessions.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          Session {s.id.substring(0, 8)}... - State: [{s.state}] {s.file_uri ? `at ${s.file_uri}:${s.line}` : ''}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+
+                {/* Stepping controls */}
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <button
+                    onClick={() => handleDebugAction('continue')}
+                    disabled={!selectedSessionId || debugActionLoading}
+                    title="Continue execution until next breakpoint"
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: 'rgba(63, 185, 80, 0.2)',
+                      color: 'var(--success)',
+                      border: '1px solid var(--success)',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ▶ Continue
+                  </button>
+                  <button
+                    onClick={() => handleDebugAction('step_over')}
+                    disabled={!selectedSessionId || debugActionLoading}
+                    title="Step Over to next line in same function"
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: 'var(--bg-panel)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ↷ Step Over
+                  </button>
+                  <button
+                    onClick={() => handleDebugAction('step_into')}
+                    disabled={!selectedSessionId || debugActionLoading}
+                    title="Step Into function call"
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: 'var(--bg-panel)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ↓ Step Into
+                  </button>
+                  <button
+                    onClick={() => handleDebugAction('step_out')}
+                    disabled={!selectedSessionId || debugActionLoading}
+                    title="Step Out of current function"
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: 'var(--bg-panel)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ↑ Step Out
+                  </button>
+                  <button
+                    onClick={() => handleDebugAction('stop')}
+                    disabled={!selectedSessionId || debugActionLoading}
+                    title="Terminate debugging session"
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: 'rgba(248, 81, 73, 0.15)',
+                      color: 'var(--danger)',
+                      border: '1px solid var(--danger)',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ⏹ Stop
+                  </button>
+                </div>
+              </div>
+
+              {/* Debugger Main Grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', flex: 1, gap: '16px', overflow: 'hidden' }}>
+                {/* Left Column: Stack Frames & Execution Pointer */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflow: 'hidden' }}>
+                  {/* Current Position Card */}
+                  <div style={{
+                    padding: '12px 14px',
+                    backgroundColor: 'var(--bg-card)',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-color)',
+                  }}>
+                    <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                      EXECUTION POINTER
+                    </div>
+                    {debugSessions.find((s) => s.id === selectedSessionId) ? (
+                      (() => {
+                        const cur = debugSessions.find((s) => s.id === selectedSessionId);
+                        return (
+                          <div style={{ fontSize: '13px' }}>
+                            <span style={{ color: 'var(--accent)', fontWeight: 600 }}>
+                              {cur.file_uri || '(Starting...)'}
+                            </span>
+                            {cur.line > 0 && <span style={{ color: 'var(--warning)', fontWeight: 'bold' }}> :{cur.line}</span>}
+                            <span style={{ marginLeft: '10px', fontSize: '11px', padding: '2px 6px', borderRadius: '4px', backgroundColor: 'var(--bg-panel)' }}>
+                              State: {cur.state}
+                            </span>
+                          </div>
+                        );
+                      })()
+                    ) : (
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                        Waiting for DBGp session connection on port 9003...
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Call Stack Table */}
+                  <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    flex: 1,
+                    backgroundColor: 'var(--bg-card)',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-color)',
+                    overflow: 'hidden'
+                  }}>
+                    <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-color)', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                      CALL STACK
+                    </div>
+                    <div style={{ flex: 1, overflow: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
+                        <thead style={{ backgroundColor: 'var(--bg-panel)', color: 'var(--text-secondary)' }}>
+                          <tr>
+                            <th style={{ padding: '8px 12px' }}>#</th>
+                            <th style={{ padding: '8px 12px' }}>Function / Method</th>
+                            <th style={{ padding: '8px 12px' }}>File</th>
+                            <th style={{ padding: '8px 12px' }}>Line</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(() => {
+                            const cur = debugSessions.find((s) => s.id === selectedSessionId);
+                            const frames = cur?.frames || [];
+                            if (frames.length === 0) {
+                              return (
+                                <tr>
+                                  <td colSpan={4} style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                                    No stack frames active.
+                                  </td>
+                                </tr>
+                              );
+                            }
+                            return frames.map((f: any, idx: number) => (
+                              <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{f.level}</td>
+                                <td style={{ padding: '8px 12px', fontFamily: 'monospace', color: 'var(--accent)' }}>{f.where || '{main}'}</td>
+                                <td style={{ padding: '8px 12px', color: 'var(--text-primary)' }}>{f.filename}</td>
+                                <td style={{ padding: '8px 12px', fontWeight: 600 }}>{f.lineno}</td>
+                              </tr>
+                            ));
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Right Column: Expression Watch & Breakpoints */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', overflow: 'hidden' }}>
+                  {/* Expression Watch / Eval Console */}
+                  <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    flex: 1,
+                    backgroundColor: 'var(--bg-card)',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-color)',
+                    overflow: 'hidden'
+                  }}>
+                    <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-color)', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                      EXPRESSION WATCH & EVAL CONSOLE
+                    </div>
+
+                    <form onSubmit={handleDebugEval} style={{ display: 'flex', padding: '10px', gap: '8px', borderBottom: '1px solid var(--border-color)' }}>
+                      <input
+                        type="text"
+                        value={debugEvalExpr}
+                        onChange={(e) => setDebugEvalExpr(e.target.value)}
+                        placeholder="e.g. $user->email or $_SERVER['REQUEST_METHOD']"
+                        style={{
+                          flex: 1,
+                          padding: '6px 10px',
+                          backgroundColor: 'var(--bg-panel)',
+                          color: 'var(--text-primary)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '6px',
+                          fontFamily: 'monospace',
+                          fontSize: '12px'
+                        }}
+                      />
+                      <button
+                        type="submit"
+                        disabled={!selectedSessionId || debugActionLoading}
+                        style={{
+                          padding: '6px 14px',
+                          backgroundColor: 'var(--accent)',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '6px',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Eval
+                      </button>
+                    </form>
+
+                    <pre style={{
+                      flex: 1,
+                      padding: '12px',
+                      overflow: 'auto',
+                      fontFamily: 'monospace',
+                      fontSize: '12px',
+                      color: 'var(--text-primary)',
+                      backgroundColor: 'transparent'
+                    }}>
+                      {evalResult || '// Result of evaluated expression will display here'}
+                    </pre>
+                  </div>
+
+                  {/* Breakpoints Manager Card */}
+                  <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    flex: 1,
+                    backgroundColor: 'var(--bg-card)',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-color)',
+                    overflow: 'hidden'
+                  }}>
+                    <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-color)', fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                      BREAKPOINTS MANAGER
+                    </div>
+
+                    {/* Add Breakpoint Form */}
+                    <form onSubmit={handleAddBreakpoint} style={{ display: 'flex', gap: '8px', padding: '8px 10px', borderBottom: '1px solid var(--border-color)' }}>
+                      <input
+                        type="text"
+                        value={newBpFile}
+                        onChange={(e) => setNewBpFile(e.target.value)}
+                        placeholder="/app/routes/api.php"
+                        required
+                        style={{
+                          flex: 2,
+                          padding: '6px 10px',
+                          backgroundColor: 'var(--bg-panel)',
+                          color: 'var(--text-primary)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '6px',
+                          fontSize: '12px'
+                        }}
+                      />
+                      <input
+                        type="number"
+                        value={newBpLine}
+                        onChange={(e) => setNewBpLine(Number(e.target.value))}
+                        placeholder="Line"
+                        required
+                        style={{
+                          width: '70px',
+                          padding: '6px 10px',
+                          backgroundColor: 'var(--bg-panel)',
+                          color: 'var(--text-primary)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '6px',
+                          fontSize: '12px'
+                        }}
+                      />
+                      <button
+                        type="submit"
+                        style={{
+                          padding: '6px 14px',
+                          backgroundColor: 'var(--bg-panel)',
+                          color: 'var(--accent)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '6px',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        + Add
+                      </button>
+                    </form>
+
+                    {/* Breakpoints List */}
+                    <div style={{ flex: 1, overflow: 'auto' }}>
+                      {breakpoints.length === 0 ? (
+                        <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '12px' }}>
+                          No breakpoints set. Add a breakpoint above to pause execution during DBGp debugging.
+                        </div>
+                      ) : (
+                        breakpoints.map((bp) => (
+                          <div key={bp.id} style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '8px 12px',
+                            borderBottom: '1px solid var(--border-color)',
+                            fontSize: '12px'
+                          }}>
+                            <div>
+                              <span style={{ color: 'var(--danger)', marginRight: '6px' }}>●</span>
+                              <span style={{ fontFamily: 'monospace' }}>{bp.file_uri}</span>
+                              <span style={{ fontWeight: 600, color: 'var(--warning)', marginLeft: '6px' }}>:{bp.line_number}</span>
+                            </div>
+                            <button
+                              onClick={() => handleDeleteBreakpoint(bp.id)}
+                              style={{
+                                padding: '2px 8px',
+                                backgroundColor: 'transparent',
+                                color: 'var(--text-secondary)',
+                                border: 'none',
+                                cursor: 'pointer',
+                                fontSize: '12px'
+                              }}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -596,6 +1534,137 @@ export function App() {
                 fontSize: '13px'
               }}>
                 <div><strong>Incoming Endpoint:</strong> <code>http://127.0.0.1:8765/wh/test-receiver</code></div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'streams' && (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '16px', overflow: 'hidden' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h2 style={{ fontSize: '16px', fontWeight: 600 }}>Live WebSocket & SSE Event Streams (Module 06 & 21)</h2>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Real-time event subscriber streaming traces, database queries, logs, and webhook triggers.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '12px',
+                    padding: '4px 10px',
+                    borderRadius: '12px',
+                    backgroundColor: streamConnected ? 'rgba(63, 185, 80, 0.15)' : 'rgba(248, 81, 73, 0.15)',
+                    color: streamConnected ? 'var(--success)' : 'var(--danger)',
+                  }}>
+                    <span style={{
+                      width: '8px',
+                      height: '8px',
+                      borderRadius: '50%',
+                      backgroundColor: streamConnected ? 'var(--success)' : 'var(--danger)'
+                    }} />
+                    {streamConnected ? 'Connected (ws://127.0.0.1:8765/v1/events/stream)' : 'Connecting...'}
+                  </div>
+
+                  <button
+                    onClick={() => setStreamEvents([])}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: 'var(--bg-card)',
+                      color: 'var(--text-secondary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Clear Log
+                  </button>
+                </div>
+              </div>
+
+              {/* Filter bar */}
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 600 }}>FILTER EVENT:</span>
+                {['all', 'trace_span', 'query_executed', 'log_emitted', 'session_started', 'webhook_received'].map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setStreamFilter(f)}
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: '4px',
+                      border: '1px solid var(--border-color)',
+                      backgroundColor: streamFilter === f ? 'var(--accent)' : 'var(--bg-card)',
+                      color: streamFilter === f ? '#fff' : 'var(--text-secondary)',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+
+              {/* Event Streams Log */}
+              <div style={{
+                flex: 1,
+                backgroundColor: 'var(--bg-card)',
+                borderRadius: '6px',
+                border: '1px solid var(--border-color)',
+                overflow: 'auto',
+                padding: '12px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px'
+              }}>
+                {(() => {
+                  const filtered = streamEvents.filter((ev) => streamFilter === 'all' || ev.event === streamFilter || ev.topic === streamFilter);
+                  if (filtered.length === 0) {
+                    return (
+                      <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                        No matching stream frames received yet. Run API requests or Artisan commands to observe live broadcast events.
+                      </div>
+                    );
+                  }
+                  return filtered.map((ev, idx) => (
+                    <div key={idx} style={{
+                      padding: '10px 12px',
+                      backgroundColor: 'var(--bg-panel)',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border-color)',
+                      fontSize: '12px'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                        <span style={{
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          fontWeight: 600,
+                          fontSize: '11px',
+                          backgroundColor: 'rgba(88, 166, 255, 0.15)',
+                          color: 'var(--accent)'
+                        }}>
+                          {ev.event || ev.topic || 'frame'}
+                        </span>
+                        <span style={{ color: 'var(--text-secondary)', fontSize: '11px' }}>
+                          {ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString()}
+                        </span>
+                      </div>
+                      <pre style={{
+                        margin: 0,
+                        fontFamily: 'monospace',
+                        fontSize: '12px',
+                        color: 'var(--text-primary)',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all'
+                      }}>
+                        {JSON.stringify(ev.data || ev.payload || ev, null, 2)}
+                      </pre>
+                    </div>
+                  ));
+                })()}
               </div>
             </div>
           )}

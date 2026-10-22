@@ -20,6 +20,8 @@ echo "[2/4] Verifying Go Local Daemon Files..."
 test -f apps/daemon/main.go && echo "  ✔ Daemon main.go found"
 test -f apps/daemon/pkg/store/store.go && echo "  ✔ Store & migrations found"
 test -f apps/daemon/pkg/executor/http.go && echo "  ✔ Execution engine found"
+test -f apps/daemon/pkg/executor/artisan.go && echo "  ✔ Safe Artisan executor found"
+test -f apps/daemon/pkg/executor/testrunner.go && echo "  ✔ Isolated test runner found"
 test -f apps/daemon/pkg/dbgp/listener.go && echo "  ✔ DBGp listener found"
 
 echo "[3/4] Verifying PHP SDK & Laravel Integration Packages..."

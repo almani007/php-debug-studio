@@ -35,4 +35,28 @@ export const api = {
     request<any[]>(`/sql/analytics${projectId ? `?project_id=${projectId}` : ''}`),
   getLogs: (projectId?: string) =>
     request<any[]>(`/logs${projectId ? `?project_id=${projectId}` : ''}`),
+  runTests: (data: { project_path: string; php_binary_path?: string; runner?: string; filter?: string }) =>
+    request<any>('/tests/runs', { method: 'POST', body: JSON.stringify(data) }),
+  runArtisan: (data: { project_path: string; command: string; args?: string[]; force_destructive?: boolean; php_binary_path?: string }) =>
+    request<any>('/artisan/run', { method: 'POST', body: JSON.stringify(data) }),
+  getBreakpoints: (projectId?: string) =>
+    request<any[]>(`/debug/breakpoints${projectId ? `?project_id=${projectId}` : ''}`),
+  createBreakpoint: (data: { project_id: string; file_uri: string; line_number: number; type?: string; condition?: string; enabled?: boolean }) =>
+    request<any>('/debug/breakpoints', { method: 'POST', body: JSON.stringify(data) }),
+  deleteBreakpoint: (id: string) =>
+    request<any>(`/debug/breakpoints/${id}`, { method: 'DELETE' }),
+  stepInto: (sessionId: string) =>
+    request<any>(`/debug/sessions/${sessionId}/step_into`, { method: 'POST' }),
+  stepOver: (sessionId: string) =>
+    request<any>(`/debug/sessions/${sessionId}/step_over`, { method: 'POST' }),
+  stepOut: (sessionId: string) =>
+    request<any>(`/debug/sessions/${sessionId}/step_out`, { method: 'POST' }),
+  continueDebug: (sessionId: string) =>
+    request<any>(`/debug/sessions/${sessionId}/continue`, { method: 'POST' }),
+  stopDebug: (sessionId: string) =>
+    request<any>(`/debug/sessions/${sessionId}/stop`, { method: 'POST' }),
+  evalDebug: (sessionId: string, expression: string) =>
+    request<any>(`/debug/sessions/${sessionId}/eval`, { method: 'POST', body: JSON.stringify({ expression }) }),
+  executeGraphQL: (data: { endpoint: string; query: string; variables?: Record<string, any>; headers?: Record<string, string> }) =>
+    request<any>('/graphql/execute', { method: 'POST', body: JSON.stringify(data) }),
 };
