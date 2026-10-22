@@ -64,6 +64,10 @@ class DebugStudioServiceProvider extends ServiceProvider
 
         // Register Queue listeners
         $this->registerQueueListeners();
+
+        // Register Cache event listeners
+        $cacheCollector = new \Zoventra\DebugStudio\Laravel\Collectors\CacheEventCollector();
+        $cacheCollector->register($this->app['events']);
     }
 
     protected function registerDatabaseListener(): void

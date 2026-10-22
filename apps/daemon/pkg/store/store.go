@@ -188,6 +188,17 @@ func (s *Store) migrate() error {
 		trace_id TEXT
 	);
 
+	CREATE TABLE IF NOT EXISTS breakpoints (
+		id TEXT PRIMARY KEY,
+		project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+		file_uri TEXT NOT NULL,
+		line_number INTEGER NOT NULL,
+		type TEXT DEFAULT 'line',
+		condition TEXT,
+		hit_condition TEXT,
+		enabled INTEGER DEFAULT 1
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_traces_proj ON traces(project_id, started_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_spans_trace ON spans(trace_id);
 	CREATE INDEX IF NOT EXISTS idx_sql_trace ON sql_queries(trace_id);

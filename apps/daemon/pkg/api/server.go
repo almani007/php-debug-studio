@@ -143,6 +143,59 @@ func (s *Server) registerRoutes() {
 
 	// Webhook Deliveries (Module 22)
 	s.mux.HandleFunc("/v1/webhooks/deliveries", s.handleWebhookDeliveries)
+
+	// Breakpoint Management (Module 10)
+	s.mux.HandleFunc("/v1/debug/breakpoints", s.handleBreakpoints)
+	s.mux.HandleFunc("/v1/debug/breakpoints/", s.handleBreakpointDetail)
+}
+
+func (s *Server) handleBreakpoints(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		projectID := r.URL.Query().Get("project_id")
+		list, err := s.store.ListBreakpoints(projectID)
+		if err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, list, nil)
+
+	case http.MethodPost:
+		var bp store.Breakpoint
+		if err := json.NewDecoder(r.Body).Decode(&bp); err != nil {
+			s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+			return
+		}
+		bpID, err := s.store.SaveBreakpoint(bp)
+		if err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		bp.ID = bpID
+		s.jsonResponse(w, http.StatusCreated, bp, nil)
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleBreakpointDetail(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/v1/debug/breakpoints/")
+	if id == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	if r.Method == http.MethodDelete {
+		if err := s.store.DeleteBreakpoint(id); err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, map[string]string{"status": "deleted"}, nil)
+		return
+	}
+
+	w.WriteHeader(http.StatusMethodNotAllowed)
 }
 
 func (s *Server) handleGRPCExecute(w http.ResponseWriter, r *http.Request) {
