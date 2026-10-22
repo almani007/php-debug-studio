@@ -77,4 +77,8 @@ export const api = {
     request<{ response: string; model: string; offline: boolean }>('/ai/diagnose', { method: 'POST', body: JSON.stringify(data) }),
   runSecurityAudit: (projectPath: string) =>
     request<any>('/security/audit', { method: 'POST', body: JSON.stringify({ project_path: projectPath }) }),
+  getLaravelRoutes: (projectPath: string, phpBinaryPath?: string) =>
+    request<any[]>(`/laravel/routes?project_path=${encodeURIComponent(projectPath)}${phpBinaryPath ? `&php_binary_path=${encodeURIComponent(phpBinaryPath)}` : ''}`),
+  purgeData: (retentionDays: number) =>
+    request<any>('/settings/purge', { method: 'POST', body: JSON.stringify({ retention_days: retentionDays }) }),
 };

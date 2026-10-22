@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from './api/client';
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<'api' | 'traces' | 'sql' | 'logs' | 'tests' | 'artisan' | 'queues' | 'security' | 'xdebug' | 'webhooks' | 'streams' | 'projects'>('api');
+  const [activeTab, setActiveTab] = useState<'api' | 'traces' | 'sql' | 'logs' | 'tests' | 'artisan' | 'queues' | 'security' | 'routes' | 'xdebug' | 'webhooks' | 'streams' | 'projects'>('api');
   const [health, setHealth] = useState<any>(null);
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
@@ -19,6 +19,17 @@ export function App() {
   // Security Diagnostics state (Module 19)
   const [securityReport, setSecurityReport] = useState<any>(null);
   const [securityLoading, setSecurityLoading] = useState<boolean>(false);
+
+  // Laravel Routes state (Module 12)
+  const [laravelRoutes, setLaravelRoutes] = useState<any[]>([]);
+  const [routesLoading, setRoutesLoading] = useState<boolean>(false);
+  const [routeSearch, setRouteSearch] = useState<string>('');
+  const [routeMethodFilter, setRouteMethodFilter] = useState<string>('ALL');
+
+  // Data Retention Purge state (Module 21)
+  const [purgeDays, setPurgeDays] = useState<number>(7);
+  const [purgeResult, setPurgeResult] = useState<any>(null);
+  const [purgeLoading, setPurgeLoading] = useState<boolean>(false);
 
   // Cookie Jar state
   const [cookies, setCookies] = useState<any[]>([]);
@@ -140,6 +151,10 @@ export function App() {
     } else if (activeTab === 'security') {
       if (activeProject && !securityReport) {
         handleRunSecurityAudit();
+      }
+    } else if (activeTab === 'routes') {
+      if (activeProject && laravelRoutes.length === 0) {
+        handleLoadLaravelRoutes();
       }
     } else if (activeTab === 'api') {
       loadCookies();
@@ -425,6 +440,47 @@ export function App() {
       alert(`Security audit error: ${err.message}`);
     } finally {
       setSecurityLoading(false);
+    }
+  };
+
+  const handleLoadLaravelRoutes = async () => {
+    if (!activeProject) {
+      alert('Please select or create a project first.');
+      return;
+    }
+    setRoutesLoading(true);
+    try {
+      const res = await api.getLaravelRoutes(activeProject.root_path, activeProject.php_binary_path);
+      setLaravelRoutes(res || []);
+    } catch (err: any) {
+      alert(`Failed to load Laravel routes: ${err.message}`);
+    } finally {
+      setRoutesLoading(false);
+    }
+  };
+
+  const handleTestRouteInApiStudio = (routeMethod: string, uri: string) => {
+    const primaryMethod = (routeMethod.split('|')[0] || 'GET').toUpperCase() as any;
+    const cleanUri = uri.replace(/^\//, '');
+    const fullUrl = `http://127.0.0.1:8000/${cleanUri}`;
+
+    setMethod(primaryMethod);
+    setUrl(fullUrl);
+    setApiMode('rest');
+    setActiveTab('api');
+  };
+
+  const handlePurgeTelemetry = async () => {
+    if (!confirm(`Purge stored traces, queries, and logs older than ${purgeDays} days?`)) return;
+    setPurgeLoading(true);
+    try {
+      const res = await api.purgeData(purgeDays);
+      setPurgeResult(res);
+      alert(`Purge complete! Deleted ${res?.deleted_traces || 0} traces, ${res?.deleted_queries || 0} queries, ${res?.deleted_logs || 0} logs.`);
+    } catch (err: any) {
+      alert(`Purge error: ${err.message}`);
+    } finally {
+      setPurgeLoading(false);
     }
   };
 
@@ -761,6 +817,7 @@ export function App() {
             { id: 'logs', label: '📜 Logs & Correlation' },
             { id: 'tests', label: '🧪 Test Studio' },
             { id: 'artisan', label: '⚡ Artisan Console' },
+            { id: 'routes', label: '🛣️ Laravel Routes' },
             { id: 'queues', label: '📬 Queue Studio' },
             { id: 'security', label: '🛡️ Security Audit' },
             { id: 'xdebug', label: '🐞 PHP Debugger' },
@@ -1714,6 +1771,201 @@ export function App() {
                     Select an artisan command and click Execute.
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'routes' && (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '16px', overflow: 'hidden' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h2 style={{ fontSize: '16px', fontWeight: 600 }}>Laravel Route Introspector (Module 12)</h2>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Live catalog of all registered routes, middleware pipelines, and controller actions with one-click API Studio testing.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    {laravelRoutes.length} route{laravelRoutes.length === 1 ? '' : 's'} registered
+                  </span>
+                  <button
+                    onClick={handleLoadLaravelRoutes}
+                    disabled={routesLoading}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: 'var(--bg-card)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {routesLoading ? 'Scanning...' : '🔄 Reload Routes'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Search & Method Filter Bar */}
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                <input
+                  type="text"
+                  value={routeSearch}
+                  onChange={(e) => setRouteSearch(e.target.value)}
+                  placeholder="Filter routes by URI, controller name, or action (e.g. users, store, api)..."
+                  style={{
+                    flex: 1,
+                    padding: '8px 12px',
+                    backgroundColor: 'var(--bg-card)',
+                    color: 'var(--text-primary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '6px',
+                    fontSize: '13px'
+                  }}
+                />
+
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  {['ALL', 'GET', 'POST', 'PUT', 'DELETE'].map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setRouteMethodFilter(m)}
+                      style={{
+                        padding: '6px 10px',
+                        borderRadius: '4px',
+                        border: '1px solid var(--border-color)',
+                        backgroundColor: routeMethodFilter === m ? 'var(--accent)' : 'var(--bg-card)',
+                        color: routeMethodFilter === m ? '#fff' : 'var(--text-secondary)',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Routes Table */}
+              <div style={{
+                flex: 1,
+                backgroundColor: 'var(--bg-card)',
+                borderRadius: '6px',
+                border: '1px solid var(--border-color)',
+                overflow: 'auto'
+              }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
+                  <thead style={{ backgroundColor: 'var(--bg-panel)', color: 'var(--text-secondary)', position: 'sticky', top: 0 }}>
+                    <tr>
+                      <th style={{ padding: '8px 12px' }}>Method</th>
+                      <th style={{ padding: '8px 12px' }}>URI</th>
+                      <th style={{ padding: '8px 12px' }}>Name</th>
+                      <th style={{ padding: '8px 12px' }}>Action / Controller</th>
+                      <th style={{ padding: '8px 12px' }}>Middleware</th>
+                      <th style={{ padding: '8px 12px', textAlign: 'right' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      const filtered = laravelRoutes.filter((r) => {
+                        const matchesMethod = routeMethodFilter === 'ALL' || r.method.toUpperCase().includes(routeMethodFilter);
+                        const q = routeSearch.toLowerCase();
+                        const matchesQuery = !q ||
+                          r.uri.toLowerCase().includes(q) ||
+                          (r.name && r.name.toLowerCase().includes(q)) ||
+                          r.action.toLowerCase().includes(q);
+                        return matchesMethod && matchesQuery;
+                      });
+
+                      if (filtered.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan={6} style={{ padding: '36px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                              {laravelRoutes.length === 0 ? 'No routes loaded. Click "Reload Routes" to introspect your Laravel application routes.' : 'No routes matching filter criteria.'}
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      return filtered.map((r, idx) => {
+                        const isGet = r.method.includes('GET');
+                        const isPost = r.method.includes('POST');
+                        const isPut = r.method.includes('PUT') || r.method.includes('PATCH');
+                        const isDelete = r.method.includes('DELETE');
+
+                        const methodBg = isGet ? 'rgba(63, 185, 80, 0.15)' :
+                          isPost ? 'rgba(88, 166, 255, 0.15)' :
+                          isPut ? 'rgba(227, 179, 65, 0.15)' :
+                          isDelete ? 'rgba(248, 81, 73, 0.15)' : 'var(--bg-panel)';
+
+                        const methodColor = isGet ? 'var(--success)' :
+                          isPost ? 'var(--accent)' :
+                          isPut ? 'var(--warning)' :
+                          isDelete ? 'var(--danger)' : 'var(--text-primary)';
+
+                        return (
+                          <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                            <td style={{ padding: '8px 12px' }}>
+                              <span style={{
+                                padding: '2px 6px',
+                                borderRadius: '4px',
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                backgroundColor: methodBg,
+                                color: methodColor,
+                              }}>
+                                {r.method}
+                              </span>
+                            </td>
+                            <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontWeight: 600 }}>
+                              {r.uri}
+                            </td>
+                            <td style={{ padding: '8px 12px', color: 'var(--text-secondary)', fontSize: '11px' }}>
+                              {r.name || '—'}
+                            </td>
+                            <td style={{ padding: '8px 12px', fontFamily: 'monospace', color: 'var(--text-primary)', fontSize: '11px' }}>
+                              {r.action}
+                            </td>
+                            <td style={{ padding: '8px 12px' }}>
+                              <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                                {(r.middleware || []).map((mw: string, i: number) => (
+                                  <span key={i} style={{
+                                    fontSize: '10px',
+                                    padding: '1px 5px',
+                                    borderRadius: '3px',
+                                    backgroundColor: 'var(--bg-panel)',
+                                    color: 'var(--text-secondary)'
+                                  }}>
+                                    {mw}
+                                  </span>
+                                ))}
+                              </div>
+                            </td>
+                            <td style={{ padding: '8px 12px', textAlign: 'right' }}>
+                              <button
+                                onClick={() => handleTestRouteInApiStudio(r.method, r.uri)}
+                                title="Open this endpoint in API Studio to test requests"
+                                style={{
+                                  padding: '4px 8px',
+                                  backgroundColor: 'rgba(88, 166, 255, 0.15)',
+                                  color: 'var(--accent)',
+                                  border: '1px solid var(--accent)',
+                                  borderRadius: '4px',
+                                  fontSize: '11px',
+                                  fontWeight: 600,
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                ⚡ Test in API Studio
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
@@ -2815,6 +3067,82 @@ export function App() {
                       </div>
                     </div>
                   ))
+                )}
+              </div>
+
+              {/* Data Retention & Local Storage Purge (Module 21 & NFR-06) */}
+              <div style={{
+                backgroundColor: 'var(--bg-card)',
+                borderRadius: '6px',
+                border: '1px solid var(--border-color)',
+                padding: '16px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px',
+                marginTop: '10px'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <h3 style={{ fontSize: '14px', fontWeight: 600 }}>🗑️ Data Retention & Storage Purge (NFR-06)</h3>
+                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                      Clean up local SQLite database storage by safely purging historical traces, queries, and log records.
+                    </p>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <select
+                      value={purgeDays}
+                      onChange={(e) => setPurgeDays(Number(e.target.value))}
+                      style={{
+                        padding: '6px 10px',
+                        backgroundColor: 'var(--bg-panel)',
+                        color: 'var(--text-primary)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '6px',
+                        fontSize: '12px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <option value={1}>Older than 1 day</option>
+                      <option value={7}>Older than 7 days</option>
+                      <option value={14}>Older than 14 days</option>
+                      <option value={30}>Older than 30 days</option>
+                    </select>
+
+                    <button
+                      onClick={handlePurgeTelemetry}
+                      disabled={purgeLoading}
+                      style={{
+                        padding: '6px 14px',
+                        backgroundColor: 'rgba(248, 81, 73, 0.15)',
+                        color: 'var(--danger)',
+                        border: '1px solid var(--danger)',
+                        borderRadius: '6px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {purgeLoading ? 'Purging...' : 'Purge Old Telemetry'}
+                    </button>
+                  </div>
+                </div>
+
+                {purgeResult && (
+                  <div style={{
+                    fontSize: '12px',
+                    padding: '8px 12px',
+                    backgroundColor: 'var(--bg-panel)',
+                    borderRadius: '4px',
+                    border: '1px solid var(--border-color)',
+                    display: 'flex',
+                    gap: '16px',
+                    color: 'var(--success)'
+                  }}>
+                    <span>✔ Deleted Traces: {purgeResult.deleted_traces || 0}</span>
+                    <span>✔ Deleted Queries: {purgeResult.deleted_queries || 0}</span>
+                    <span>✔ Deleted Logs: {purgeResult.deleted_logs || 0}</span>
+                  </div>
                 )}
               </div>
             </div>
