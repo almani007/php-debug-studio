@@ -113,6 +113,34 @@ func (s *Server) registerRoutes() {
 
 	// PHP Runtimes (Module 25 & User Selectable Versions)
 	s.mux.HandleFunc("/v1/runtimes/php", s.handlePhpRuntimes)
+
+	// Settings & Data Retention Purge (Module 21 & NFR-06)
+	s.mux.HandleFunc("/v1/settings/purge", s.handlePurge)
+}
+
+func (s *Server) handlePurge(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		RetentionDays int `json:"retention_days"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	days := req.RetentionDays
+	if days <= 0 {
+		days = 7
+	}
+
+	summary, err := s.store.PurgeOldTelemetry(days)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "PURGE_ERROR", Message: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, summary, nil)
 }
 
 func (s *Server) handlePhpRuntimes(w http.ResponseWriter, r *http.Request) {
