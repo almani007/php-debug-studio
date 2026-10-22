@@ -1,0 +1,16 @@
+{
+  "name": "@zoventra/php-debug-studio-browser",
+  "version": "1.0.0",
+  "description": "Browser JavaScript tracing SDK for full-stack correlation with PHP Debug Studio",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "keywords": ["browser", "tracing", "php", "debug", "w3c", "traceparent"],
+  "author": "zoventra",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
