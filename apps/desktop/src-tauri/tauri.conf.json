@@ -1,0 +1,41 @@
+{
+  "build": {
+    "beforeDevCommand": "pnpm --filter @zoventra/php-debug-studio-web dev",
+    "beforeBuildCommand": "pnpm --filter @zoventra/php-debug-studio-web build",
+    "devPath": "http://localhost:3000",
+    "distDir": "../web/dist"
+  },
+  "package": {
+    "productName": "PHP Debug Studio",
+    "version": "1.0.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "shell": {
+        "all": false,
+        "open": true
+      }
+    },
+    "bundle": {
+      "active": true,
+      "targets": "all",
+      "identifier": "com.zoventra.phpdebugstudio",
+      "icon": [
+        "icons/icon.png"
+      ]
+    },
+    "security": {
+      "csp": "default-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    },
+    "windows": [
+      {
+        "title": "PHP Debug Studio",
+        "width": 1280,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ]
+  }
+}

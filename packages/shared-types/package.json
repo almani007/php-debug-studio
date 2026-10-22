@@ -1,0 +1,16 @@
+{
+  "name": "@zoventra/php-debug-studio-types",
+  "version": "1.0.0",
+  "description": "Shared TypeScript definitions for PHP Debug Studio",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "keywords": ["php", "debug", "laravel", "types"],
+  "author": "zoventra",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
