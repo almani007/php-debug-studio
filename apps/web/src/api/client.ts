@@ -25,4 +25,10 @@ export const api = {
   getTraces: (projectId?: string) => request<any[]>(`/traces${projectId ? `?project_id=${projectId}` : ''}`),
   getTraceDetail: (traceId: string) => request<any>(`/traces/${traceId}`),
   getDebugSessions: () => request<any[]>('/debug/sessions'),
+  getPhpRuntimes: () => request<Array<{ version: string; binary_path: string; is_default: boolean }>>('/runtimes/php'),
+  updateProjectPhp: (projectId: string, phpVersion: string, phpBinaryPath?: string) =>
+    request<any>(`/projects/${projectId}/php`, {
+      method: 'PATCH',
+      body: JSON.stringify({ php_version: phpVersion, php_binary_path: phpBinaryPath || '' }),
+    }),
 };

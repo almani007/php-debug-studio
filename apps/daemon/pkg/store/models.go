@@ -10,6 +10,7 @@ type Project struct {
 	Slug           string    `json:"slug"`
 	Framework      string    `json:"framework"`
 	PhpVersion     string    `json:"php_version"`
+	PhpBinaryPath  string    `json:"php_binary_path,omitempty"`
 	RootPath       string    `json:"root_path"`
 	AppUrl         string    `json:"app_url"`
 	ConnectionMode string    `json:"connection_mode"`

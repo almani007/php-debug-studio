@@ -15,17 +15,19 @@ import (
 	"github.com/zoventra/php-debug-studio/daemon/pkg/dbgp"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/executor"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/mock"
+	"github.com/zoventra/php-debug-studio/daemon/pkg/runtimes"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/store"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/ws"
 )
 
 type Server struct {
-	store      *store.Store
-	hub        *ws.Hub
-	engine     *executor.Engine
-	listener   *dbgp.Listener
-	mockServer *mock.MockServer
-	mux        *http.ServeMux
+	store       *store.Store
+	hub         *ws.Hub
+	engine      *executor.Engine
+	listener    *dbgp.Listener
+	mockServer  *mock.MockServer
+	phpDetector *runtimes.PhpDetector
+	mux         *http.ServeMux
 }
 
 type ResponseEnvelope struct {
@@ -50,12 +52,13 @@ func NewServer(s *store.Store, h *ws.Hub, e *executor.Engine, l *dbgp.Listener, 
 		m = mock.NewMockServer()
 	}
 	srv := &Server{
-		store:      s,
-		hub:        h,
-		engine:     e,
-		listener:   l,
-		mockServer: m,
-		mux:        http.NewServeMux(),
+		store:       s,
+		hub:         h,
+		engine:      e,
+		listener:    l,
+		mockServer:  m,
+		phpDetector: runtimes.NewPhpDetector(),
+		mux:         http.NewServeMux(),
 	}
 	srv.registerRoutes()
 	return srv
@@ -107,6 +110,18 @@ func (s *Server) registerRoutes() {
 	// Local Mock Server (Module 09)
 	s.mux.HandleFunc("/v1/mocks", s.handleMocks)
 	s.mux.Handle("/mock/", http.StripPrefix("/mock", s.mockServer))
+
+	// PHP Runtimes (Module 25 & User Selectable Versions)
+	s.mux.HandleFunc("/v1/runtimes/php", s.handlePhpRuntimes)
+}
+
+func (s *Server) handlePhpRuntimes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	runtimesList := s.phpDetector.DetectAvailableRuntimes()
+	s.jsonResponse(w, http.StatusOK, runtimesList, nil)
 }
 
 func (s *Server) handleMocks(w http.ResponseWriter, r *http.Request) {
@@ -164,6 +179,7 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 			Slug           string `json:"slug"`
 			Framework      string `json:"framework"`
 			PhpVersion     string `json:"php_version"`
+			PhpBinaryPath  string `json:"php_binary_path"`
 			RootPath       string `json:"root_path"`
 			AppUrl         string `json:"app_url"`
 			ConnectionMode string `json:"connection_mode"`
@@ -196,6 +212,7 @@ func (s *Server) handleProjects(w http.ResponseWriter, r *http.Request) {
 			Slug:           slug,
 			Framework:      req.Framework,
 			PhpVersion:     req.PhpVersion,
+			PhpBinaryPath:  req.PhpBinaryPath,
 			RootPath:       req.RootPath,
 			AppUrl:         req.AppUrl,
 			ConnectionMode: req.ConnectionMode,
@@ -222,6 +239,25 @@ func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/v1/projects/")
 	if id == "" {
 		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	// Handle PATCH /v1/projects/{id}/php or /v1/projects/{id}
+	if r.Method == http.MethodPatch {
+		var req struct {
+			PhpVersion    string `json:"php_version"`
+			PhpBinaryPath string `json:"php_binary_path"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+			return
+		}
+		cleanID := strings.TrimSuffix(id, "/php")
+		if err := s.store.UpdateProjectPhpVersion(cleanID, req.PhpVersion, req.PhpBinaryPath); err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, map[string]interface{}{"status": "updated", "php_version": req.PhpVersion, "php_binary_path": req.PhpBinaryPath}, nil)
 		return
 	}
 

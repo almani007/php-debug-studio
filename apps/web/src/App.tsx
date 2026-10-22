@@ -6,6 +6,7 @@ export function App() {
   const [health, setHealth] = useState<any>(null);
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
+  const [phpRuntimes, setPhpRuntimes] = useState<Array<{ version: string; binary_path: string; is_default: boolean }>>([]);
 
   // API Studio state
   const [method, setMethod] = useState<'GET' | 'POST' | 'PUT' | 'DELETE'>('GET');
@@ -16,23 +17,50 @@ export function App() {
 
   // Traces state
   const [traces, setTraces] = useState<any[]>([]);
-  const [selectedTrace, setSelectedTrace] = useState<any>(null);
 
-  // Poll health and projects on load
+  // Project form state
+  const [newProjectName, setNewProjectName] = useState<string>('');
+  const [newProjectPath, setNewProjectPath] = useState<string>('');
+  const [newProjectFramework, setNewProjectFramework] = useState<string>('Laravel');
+  const [newProjectPhp, setNewProjectPhp] = useState<string>('8.3');
+
+  // Load health, projects, and PHP runtimes on start
   useEffect(() => {
     api.getHealth()
       .then(setHealth)
       .catch(() => setHealth({ status: 'offline' }));
 
+    loadProjects();
+
+    api.getPhpRuntimes()
+      .then((data) => {
+        setPhpRuntimes(data);
+        const defaultVer = data.find((r) => r.is_default)?.version || '8.3';
+        setNewProjectPhp(defaultVer);
+      })
+      .catch(() => {
+        setPhpRuntimes([
+          { version: '8.4', binary_path: 'php8.4', is_default: false },
+          { version: '8.3', binary_path: 'php8.3', is_default: true },
+          { version: '8.2', binary_path: 'php8.2', is_default: false },
+          { version: '8.1', binary_path: 'php8.1', is_default: false },
+          { version: '8.0', binary_path: 'php8.0', is_default: false },
+          { version: '7.4', binary_path: 'php7.4', is_default: false },
+        ]);
+      });
+  }, []);
+
+  const loadProjects = () => {
     api.getProjects()
       .then((data) => {
         setProjects(data);
-        if (data.length > 0) setSelectedProjectId(data[0].id);
+        if (data.length > 0 && !selectedProjectId) {
+          setSelectedProjectId(data[0].id);
+        }
       })
       .catch(() => {});
-  }, []);
+  };
 
-  // Fetch traces when switching to traces tab
   useEffect(() => {
     if (activeTab === 'traces' || activeTab === 'sql') {
       api.getTraces(selectedProjectId)
@@ -40,6 +68,38 @@ export function App() {
         .catch(() => {});
     }
   }, [activeTab, selectedProjectId]);
+
+  const activeProject = projects.find((p) => p.id === selectedProjectId);
+
+  const handleUpdateProjectPhp = async (projectId: string, version: string) => {
+    try {
+      await api.updateProjectPhp(projectId, version);
+      loadProjects();
+    } catch (err: any) {
+      alert(`Error updating PHP version: ${err.message}`);
+    }
+  };
+
+  const handleCreateProject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newProjectName || !newProjectPath) return;
+
+    try {
+      const created = await api.createProject({
+        name: newProjectName,
+        root_path: newProjectPath,
+        framework: newProjectFramework,
+        php_version: newProjectPhp,
+        connection_mode: 'local',
+      });
+      setNewProjectName('');
+      setNewProjectPath('');
+      loadProjects();
+      setSelectedProjectId(created.id);
+    } catch (err: any) {
+      alert(`Failed to create project: ${err.message}`);
+    }
+  };
 
   const handleSendRequest = async () => {
     setLoading(true);
@@ -60,6 +120,8 @@ export function App() {
       setLoading(false);
     }
   };
+
+  const standardPhpOptions = ['8.4', '8.3', '8.2', '8.1', '8.0', '7.4'];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
@@ -84,7 +146,7 @@ export function App() {
           <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>by zoventra</span>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
           {/* Project Selector */}
           <select
             value={selectedProjectId}
@@ -103,6 +165,33 @@ export function App() {
               <option key={p.id} value={p.id}>{p.name} ({p.framework || 'PHP'})</option>
             ))}
           </select>
+
+          {/* User Selectable PHP Version Dropdown for Active Project */}
+          {activeProject && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>PHP:</span>
+              <select
+                value={activeProject.php_version || '8.3'}
+                onChange={(e) => handleUpdateProjectPhp(activeProject.id, e.target.value)}
+                style={{
+                  padding: '4px 8px',
+                  backgroundColor: 'rgba(88, 166, 255, 0.15)',
+                  color: 'var(--accent)',
+                  border: '1px solid var(--accent)',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                {standardPhpOptions.map((ver) => (
+                  <option key={ver} value={ver} style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-primary)' }}>
+                    PHP {ver} {ver === '7.4' || ver === '8.0' ? '(Legacy)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Status Badge */}
           <div style={{
@@ -144,7 +233,7 @@ export function App() {
             { id: 'sql', label: '🗄️ SQL Studio' },
             { id: 'xdebug', label: '🐞 PHP Debugger' },
             { id: 'webhooks', label: '🪝 Webhook Studio' },
-            { id: 'projects', label: '📁 Projects' },
+            { id: 'projects', label: '📁 Projects & PHP Runtimes' },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -399,31 +488,190 @@ export function App() {
           )}
 
           {activeTab === 'projects' && (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '12px' }}>
-              <h2 style={{ fontSize: '16px', fontWeight: 600 }}>Multi-Project Workspaces (Module 25)</h2>
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '16px', overflow: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h2 style={{ fontSize: '16px', fontWeight: 600 }}>Multi-Project Workspaces & PHP Versions</h2>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Each project can run on its own independently selected PHP version (7.4 through 8.4).
+                  </p>
+                </div>
+              </div>
+
+              {/* Add Project Card */}
+              <form onSubmit={handleCreateProject} style={{
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid var(--border-color)',
+                borderRadius: '6px',
+                padding: '16px',
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr 120px 140px 100px',
+                gap: '12px',
+                alignItems: 'end'
+              }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                    PROJECT NAME
+                  </label>
+                  <input
+                    type="text"
+                    value={newProjectName}
+                    onChange={(e) => setNewProjectName(e.target.value)}
+                    placeholder="e.g. Care Vision"
+                    required
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      backgroundColor: 'var(--bg-panel)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '13px'
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                    ROOT PATH
+                  </label>
+                  <input
+                    type="text"
+                    value={newProjectPath}
+                    onChange={(e) => setNewProjectPath(e.target.value)}
+                    placeholder="/Users/pl/Documents/sites/app"
+                    required
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      backgroundColor: 'var(--bg-panel)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '13px'
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                    FRAMEWORK
+                  </label>
+                  <select
+                    value={newProjectFramework}
+                    onChange={(e) => setNewProjectFramework(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      backgroundColor: 'var(--bg-panel)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '13px'
+                    }}
+                  >
+                    <option value="Laravel">Laravel</option>
+                    <option value="Symfony">Symfony</option>
+                    <option value="Plain PHP">Plain PHP</option>
+                    <option value="WordPress">WordPress</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                    PHP VERSION
+                  </label>
+                  <select
+                    value={newProjectPhp}
+                    onChange={(e) => setNewProjectPhp(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      backgroundColor: 'var(--bg-panel)',
+                      color: 'var(--accent)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '13px',
+                      fontWeight: 600
+                    }}
+                  >
+                    {standardPhpOptions.map((ver) => (
+                      <option key={ver} value={ver}>PHP {ver}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <button
+                  type="submit"
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: 'var(--accent)',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '6px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    height: '35px'
+                  }}
+                >
+                  + Add
+                </button>
+              </form>
+
+              {/* Projects List with PHP Version Selectors */}
               <div style={{
-                flex: 1,
                 backgroundColor: 'var(--bg-card)',
                 borderRadius: '6px',
                 border: '1px solid var(--border-color)',
-                padding: '16px',
-                overflow: 'auto'
+                overflow: 'hidden'
               }}>
-                {projects.map((p) => (
-                  <div key={p.id} style={{
-                    padding: '12px',
-                    borderBottom: '1px solid var(--border-color)',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center'
-                  }}>
-                    <div>
-                      <div style={{ fontWeight: 600 }}>{p.name}</div>
-                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{p.root_path}</div>
-                    </div>
-                    <span style={{ fontSize: '12px', color: 'var(--accent)' }}>{p.framework || 'PHP'}</span>
+                {projects.length === 0 ? (
+                  <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                    No projects registered yet. Use the form above to add your first project.
                   </div>
-                ))}
+                ) : (
+                  projects.map((p) => (
+                    <div key={p.id} style={{
+                      padding: '14px 16px',
+                      borderBottom: '1px solid var(--border-color)',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: '14px' }}>{p.name}</div>
+                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>{p.root_path}</div>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{p.framework || 'PHP'}</span>
+
+                        {/* Interactive PHP Version Selector for each project */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>PHP Version:</span>
+                          <select
+                            value={p.php_version || '8.3'}
+                            onChange={(e) => handleUpdateProjectPhp(p.id, e.target.value)}
+                            style={{
+                              padding: '4px 8px',
+                              backgroundColor: 'var(--bg-panel)',
+                              color: 'var(--accent)',
+                              border: '1px solid var(--border-color)',
+                              borderRadius: '6px',
+                              fontSize: '12px',
+                              fontWeight: 600,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            {standardPhpOptions.map((ver) => (
+                              <option key={ver} value={ver}>PHP {ver}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           )}

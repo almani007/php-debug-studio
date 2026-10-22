@@ -26,12 +26,19 @@ export interface Project {
   slug: string;
   framework?: string;
   php_version?: string;
+  php_binary_path?: string;
   root_path: string;
   app_url?: string;
   connection_mode: 'local' | 'docker' | 'ssh';
   workspace_id?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface PhpRuntimeInfo {
+  version: string;
+  binary_path: string;
+  is_default: boolean;
 }
 
 export interface ProjectEnvironment {

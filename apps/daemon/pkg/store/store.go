@@ -40,6 +40,7 @@ func (s *Store) migrate() error {
 		slug TEXT UNIQUE NOT NULL,
 		framework TEXT,
 		php_version TEXT,
+		php_binary_path TEXT,
 		root_path TEXT NOT NULL,
 		app_url TEXT,
 		connection_mode TEXT DEFAULT 'local',
@@ -164,15 +165,15 @@ func (s *Store) migrate() error {
 }
 
 func (s *Store) CreateProject(p Project) error {
-	query := `INSERT INTO projects (id, name, slug, framework, php_version, root_path, app_url, connection_mode, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	_, err := s.db.Exec(query, p.ID, p.Name, p.Slug, p.Framework, p.PhpVersion, p.RootPath, p.AppUrl, p.ConnectionMode,
+	query := `INSERT INTO projects (id, name, slug, framework, php_version, php_binary_path, root_path, app_url, connection_mode, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	_, err := s.db.Exec(query, p.ID, p.Name, p.Slug, p.Framework, p.PhpVersion, p.PhpBinaryPath, p.RootPath, p.AppUrl, p.ConnectionMode,
 		p.CreatedAt.Format(time.RFC3339), p.UpdatedAt.Format(time.RFC3339))
 	return err
 }
 
 func (s *Store) ListProjects() ([]Project, error) {
-	query := `SELECT id, name, slug, framework, php_version, root_path, app_url, connection_mode, created_at, updated_at FROM projects ORDER BY updated_at DESC`
+	query := `SELECT id, name, slug, framework, COALESCE(php_version, ''), COALESCE(php_binary_path, ''), root_path, COALESCE(app_url, ''), connection_mode, created_at, updated_at FROM projects ORDER BY updated_at DESC`
 	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, err
@@ -183,7 +184,7 @@ func (s *Store) ListProjects() ([]Project, error) {
 	for rows.Next() {
 		var p Project
 		var createdAt, updatedAt string
-		if err := rows.Scan(&p.ID, &p.Name, &p.Slug, &p.Framework, &p.PhpVersion, &p.RootPath, &p.AppUrl, &p.ConnectionMode, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Slug, &p.Framework, &p.PhpVersion, &p.PhpBinaryPath, &p.RootPath, &p.AppUrl, &p.ConnectionMode, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		p.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
@@ -194,12 +195,12 @@ func (s *Store) ListProjects() ([]Project, error) {
 }
 
 func (s *Store) GetProject(id string) (*Project, error) {
-	query := `SELECT id, name, slug, framework, php_version, root_path, app_url, connection_mode, created_at, updated_at FROM projects WHERE id = ? OR slug = ?`
+	query := `SELECT id, name, slug, framework, COALESCE(php_version, ''), COALESCE(php_binary_path, ''), root_path, COALESCE(app_url, ''), connection_mode, created_at, updated_at FROM projects WHERE id = ? OR slug = ?`
 	row := s.db.QueryRow(query, id, id)
 
 	var p Project
 	var createdAt, updatedAt string
-	if err := row.Scan(&p.ID, &p.Name, &p.Slug, &p.Framework, &p.PhpVersion, &p.RootPath, &p.AppUrl, &p.ConnectionMode, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&p.ID, &p.Name, &p.Slug, &p.Framework, &p.PhpVersion, &p.PhpBinaryPath, &p.RootPath, &p.AppUrl, &p.ConnectionMode, &createdAt, &updatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
@@ -208,6 +209,12 @@ func (s *Store) GetProject(id string) (*Project, error) {
 	p.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	p.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
 	return &p, nil
+}
+
+func (s *Store) UpdateProjectPhpVersion(id, version, binaryPath string) error {
+	query := `UPDATE projects SET php_version = ?, php_binary_path = ?, updated_at = ? WHERE id = ? OR slug = ?`
+	_, err := s.db.Exec(query, version, binaryPath, time.Now().UTC().Format(time.RFC3339), id, id)
+	return err
 }
 
 func (s *Store) InsertTrace(t Trace) error {
