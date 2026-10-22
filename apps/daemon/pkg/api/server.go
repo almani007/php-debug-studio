@@ -27,6 +27,7 @@ type Server struct {
 	hub         *ws.Hub
 	engine      *executor.Engine
 	graphQL     *executor.GraphQLEngine
+	grpcEngine  *executor.GRPCEngine
 	listener    *dbgp.Listener
 	mockServer  *mock.MockServer
 	phpDetector *runtimes.PhpDetector
@@ -59,6 +60,7 @@ func NewServer(s *store.Store, h *ws.Hub, e *executor.Engine, l *dbgp.Listener, 
 		hub:         h,
 		engine:      e,
 		graphQL:     executor.NewGraphQLEngine(),
+		grpcEngine:  executor.NewGRPCEngine(),
 		listener:    l,
 		mockServer:  m,
 		phpDetector: runtimes.NewPhpDetector(),
@@ -132,6 +134,79 @@ func (s *Server) registerRoutes() {
 
 	// Audit Logging (Module 25 & SEC-10)
 	s.mux.HandleFunc("/v1/audit", s.handleAuditEvents)
+
+	// gRPC Engine (Module 07)
+	s.mux.HandleFunc("/v1/grpc/execute", s.handleGRPCExecute)
+
+	// Log Explorer & Search (Module 16)
+	s.mux.HandleFunc("/v1/logs", s.handleLogSearch)
+
+	// Webhook Deliveries (Module 22)
+	s.mux.HandleFunc("/v1/webhooks/deliveries", s.handleWebhookDeliveries)
+}
+
+func (s *Server) handleGRPCExecute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req executor.GRPCRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	res := s.grpcEngine.ExecuteUnary(req)
+	s.jsonResponse(w, http.StatusOK, res, nil)
+}
+
+func (s *Server) handleLogSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	q := r.URL.Query()
+	limit := 100
+	if l := q.Get("limit"); l != "" {
+		if val, err := strconv.Atoi(l); err == nil {
+			limit = val
+		}
+	}
+
+	filter := store.LogFilter{
+		ProjectID: q.Get("project_id"),
+		TraceID:   q.Get("trace_id"),
+		Level:     q.Get("level"),
+		Channel:   q.Get("channel"),
+		Search:    q.Get("search"),
+		Limit:     limit,
+	}
+
+	logs, err := s.store.SearchLogs(filter)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, logs, nil)
+}
+
+func (s *Server) handleWebhookDeliveries(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	eventID := r.URL.Query().Get("event_id")
+	deliveries, err := s.store.ListWebhookDeliveries(eventID, 50)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, deliveries, nil)
 }
 
 func (s *Server) handleAuthPKCE(w http.ResponseWriter, r *http.Request) {

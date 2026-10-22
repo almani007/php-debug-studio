@@ -176,6 +176,18 @@ func (s *Store) migrate() error {
 		created_at TEXT NOT NULL
 	);
 
+	CREATE TABLE IF NOT EXISTS webhook_deliveries (
+		id TEXT PRIMARY KEY,
+		event_id TEXT NOT NULL REFERENCES webhook_events(id) ON DELETE CASCADE,
+		rule_id TEXT,
+		attempt INTEGER DEFAULT 1,
+		sent_at TEXT NOT NULL,
+		status_code INTEGER,
+		latency_ms INTEGER,
+		error_code TEXT,
+		trace_id TEXT
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_traces_proj ON traces(project_id, started_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_spans_trace ON spans(trace_id);
 	CREATE INDEX IF NOT EXISTS idx_sql_trace ON sql_queries(trace_id);
