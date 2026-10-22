@@ -31,4 +31,8 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ php_version: phpVersion, php_binary_path: phpBinaryPath || '' }),
     }),
+  getSQLAnalytics: (projectId?: string) =>
+    request<any[]>(`/sql/analytics${projectId ? `?project_id=${projectId}` : ''}`),
+  getLogs: (projectId?: string) =>
+    request<any[]>(`/logs${projectId ? `?project_id=${projectId}` : ''}`),
 };

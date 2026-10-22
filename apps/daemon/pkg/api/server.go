@@ -147,6 +147,33 @@ func (s *Server) registerRoutes() {
 	// Breakpoint Management (Module 10)
 	s.mux.HandleFunc("/v1/debug/breakpoints", s.handleBreakpoints)
 	s.mux.HandleFunc("/v1/debug/breakpoints/", s.handleBreakpointDetail)
+
+	// SQL Analytics & Slow Query Ranking (Module 13)
+	s.mux.HandleFunc("/v1/sql/analytics", s.handleSQLAnalytics)
+}
+
+func (s *Server) handleSQLAnalytics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	q := r.URL.Query()
+	projectID := q.Get("project_id")
+	slowThreshold := 50
+	if th := q.Get("slow_threshold_ms"); th != "" {
+		if val, err := strconv.Atoi(th); err == nil {
+			slowThreshold = val
+		}
+	}
+
+	analytics, err := s.store.GetSQLAnalytics(projectID, slowThreshold)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, analytics, nil)
 }
 
 func (s *Server) handleBreakpoints(w http.ResponseWriter, r *http.Request) {
@@ -477,6 +504,18 @@ func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/v1/projects/")
 	if id == "" {
 		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	// Handle GET /v1/projects/{id}/export
+	if strings.HasSuffix(id, "/export") {
+		cleanID := strings.TrimSuffix(id, "/export")
+		bundle, err := s.store.ExportSanitizedBundle(cleanID)
+		if err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "EXPORT_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, bundle, nil)
 		return
 	}
 

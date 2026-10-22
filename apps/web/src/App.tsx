@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from './api/client';
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<'api' | 'traces' | 'sql' | 'xdebug' | 'webhooks' | 'projects'>('api');
+  const [activeTab, setActiveTab] = useState<'api' | 'traces' | 'sql' | 'logs' | 'xdebug' | 'webhooks' | 'projects'>('api');
   const [health, setHealth] = useState<any>(null);
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
@@ -15,8 +15,10 @@ export function App() {
   const [response, setResponse] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
-  // Traces state
+  // Traces & SQL state
   const [traces, setTraces] = useState<any[]>([]);
+  const [sqlAnalytics, setSqlAnalytics] = useState<any[]>([]);
+  const [logs, setLogs] = useState<any[]>([]);
 
   // Project form state
   const [newProjectName, setNewProjectName] = useState<string>('');
@@ -62,10 +64,18 @@ export function App() {
   };
 
   useEffect(() => {
-    if (activeTab === 'traces' || activeTab === 'sql') {
+    if (activeTab === 'traces') {
       api.getTraces(selectedProjectId)
         .then(setTraces)
         .catch(() => {});
+    } else if (activeTab === 'sql') {
+      api.getSQLAnalytics(selectedProjectId)
+        .then((data) => setSqlAnalytics(data || []))
+        .catch(() => setSqlAnalytics([]));
+    } else if (activeTab === 'logs') {
+      api.getLogs(selectedProjectId)
+        .then((data) => setLogs(data || []))
+        .catch(() => setLogs([]));
     }
   }, [activeTab, selectedProjectId]);
 
@@ -231,6 +241,7 @@ export function App() {
             { id: 'api', label: '⚡ API Studio' },
             { id: 'traces', label: '🌊 Traces & Waterfall' },
             { id: 'sql', label: '🗄️ SQL Studio' },
+            { id: 'logs', label: '📜 Logs & Correlation' },
             { id: 'xdebug', label: '🐞 PHP Debugger' },
             { id: 'webhooks', label: '🪝 Webhook Studio' },
             { id: 'projects', label: '📁 Projects & PHP Runtimes' },
@@ -433,20 +444,122 @@ export function App() {
 
           {activeTab === 'sql' && (
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '12px' }}>
-              <h2 style={{ fontSize: '16px', fontWeight: 600 }}>SQL Studio & N+1 Query Diagnostics</h2>
-              <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                Monitors SQL executions in real-time, redacting bindings and identifying potential N+1 loops and missing indexes.
-              </p>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h2 style={{ fontSize: '16px', fontWeight: 600 }}>SQL Studio & Slow Query Analytics</h2>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Aggregates query fingerprints, tracking latency percentiles and highlighting queries exceeding 50ms.
+                  </p>
+                </div>
+              </div>
               <div style={{
                 flex: 1,
                 backgroundColor: 'var(--bg-card)',
                 borderRadius: '6px',
                 border: '1px solid var(--border-color)',
-                padding: '24px',
-                textAlign: 'center',
-                color: 'var(--text-secondary)'
+                overflow: 'auto'
               }}>
-                Awaiting SQL executions from active Laravel DB::listen stream...
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>
+                      <th style={{ padding: '8px 12px' }}>SQL Template</th>
+                      <th style={{ padding: '8px 12px' }}>Count</th>
+                      <th style={{ padding: '8px 12px' }}>Total Time</th>
+                      <th style={{ padding: '8px 12px' }}>Avg Time</th>
+                      <th style={{ padding: '8px 12px' }}>Max Time</th>
+                      <th style={{ padding: '8px 12px' }}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sqlAnalytics.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                          No SQL executions recorded yet. Invoke an endpoint that queries your database.
+                        </td>
+                      </tr>
+                    ) : (
+                      sqlAnalytics.map((q, idx) => (
+                        <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                          <td style={{ padding: '8px 12px', fontFamily: 'monospace', maxWidth: '400px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {q.sql_template}
+                          </td>
+                          <td style={{ padding: '8px 12px' }}>{q.execution_count}x</td>
+                          <td style={{ padding: '8px 12px' }}>{Math.round(q.total_duration_us / 1000)} ms</td>
+                          <td style={{ padding: '8px 12px' }}>{Math.round(q.avg_duration_us / 1000)} ms</td>
+                          <td style={{ padding: '8px 12px' }}>{Math.round(q.max_duration_us / 1000)} ms</td>
+                          <td style={{ padding: '8px 12px' }}>
+                            {q.is_slow ? (
+                              <span style={{ padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(248, 81, 73, 0.15)', color: 'var(--danger)', fontSize: '11px', fontWeight: 600 }}>
+                                SLOW
+                              </span>
+                            ) : (
+                              <span style={{ padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(63, 185, 80, 0.15)', color: 'var(--success)', fontSize: '11px', fontWeight: 600 }}>
+                                FAST
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'logs' && (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '12px' }}>
+              <h2 style={{ fontSize: '16px', fontWeight: 600 }}>Application Logs & Correlation (Module 16)</h2>
+              <div style={{
+                flex: 1,
+                backgroundColor: 'var(--bg-card)',
+                borderRadius: '6px',
+                border: '1px solid var(--border-color)',
+                overflow: 'auto'
+              }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>
+                      <th style={{ padding: '8px 12px' }}>Level</th>
+                      <th style={{ padding: '8px 12px' }}>Channel</th>
+                      <th style={{ padding: '8px 12px' }}>Message</th>
+                      <th style={{ padding: '8px 12px' }}>Trace ID</th>
+                      <th style={{ padding: '8px 12px' }}>Timestamp</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {logs.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                          No application logs recorded. Logs written via PSR-3 logger or Laravel Log facade will stream here.
+                        </td>
+                      </tr>
+                    ) : (
+                      logs.map((l) => (
+                        <tr key={l.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                          <td style={{ padding: '8px 12px' }}>
+                            <span style={{
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                              backgroundColor: l.level === 'error' || l.level === 'critical' ? 'rgba(248, 81, 73, 0.15)' : 'rgba(88, 166, 255, 0.15)',
+                              color: l.level === 'error' || l.level === 'critical' ? 'var(--danger)' : 'var(--accent)',
+                            }}>
+                              {l.level.toUpperCase()}
+                            </span>
+                          </td>
+                          <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{l.channel}</td>
+                          <td style={{ padding: '8px 12px' }}>{l.message_masked}</td>
+                          <td style={{ padding: '8px 12px', fontFamily: 'monospace', color: 'var(--accent)' }}>
+                            {l.trace_id ? l.trace_id.substring(0, 8) + '...' : '-'}
+                          </td>
+                          <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{new Date(l.timestamp).toLocaleTimeString()}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
