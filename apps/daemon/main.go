@@ -8,12 +8,12 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/zoventra/php-debug-studio/daemon/pkg/api"
-	"github.com/zoventra/php-debug-studio/daemon/pkg/dbgp"
-	"github.com/zoventra/php-debug-studio/daemon/pkg/executor"
-	"github.com/zoventra/php-debug-studio/daemon/pkg/mock"
-	"github.com/zoventra/php-debug-studio/daemon/pkg/store"
-	"github.com/zoventra/php-debug-studio/daemon/pkg/ws"
+	"zoventra/php-debug-studio/daemon/pkg/api"
+	"zoventra/php-debug-studio/daemon/pkg/dbgp"
+	"zoventra/php-debug-studio/daemon/pkg/executor"
+	"zoventra/php-debug-studio/daemon/pkg/mock"
+	"zoventra/php-debug-studio/daemon/pkg/store"
+	"zoventra/php-debug-studio/daemon/pkg/ws"
 )
 
 func main() {

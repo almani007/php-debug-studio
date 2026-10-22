@@ -13,15 +13,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zoventra/php-debug-studio/daemon/pkg/ai"
-	"github.com/zoventra/php-debug-studio/daemon/pkg/auth"
-	"github.com/zoventra/php-debug-studio/daemon/pkg/dbgp"
-	"github.com/zoventra/php-debug-studio/daemon/pkg/executor"
-	"github.com/zoventra/php-debug-studio/daemon/pkg/mock"
-	"github.com/zoventra/php-debug-studio/daemon/pkg/runtimes"
-	"github.com/zoventra/php-debug-studio/daemon/pkg/store"
-	"github.com/zoventra/php-debug-studio/daemon/pkg/webhook"
-	"github.com/zoventra/php-debug-studio/daemon/pkg/ws"
+	"zoventra/php-debug-studio/daemon/pkg/ai"
+	"zoventra/php-debug-studio/daemon/pkg/auth"
+	"zoventra/php-debug-studio/daemon/pkg/dbgp"
+	"zoventra/php-debug-studio/daemon/pkg/executor"
+	"zoventra/php-debug-studio/daemon/pkg/mock"
+	"zoventra/php-debug-studio/daemon/pkg/runtimes"
+	"zoventra/php-debug-studio/daemon/pkg/store"
+	"zoventra/php-debug-studio/daemon/pkg/webhook"
+	"zoventra/php-debug-studio/daemon/pkg/ws"
 )
 
 type Server struct {

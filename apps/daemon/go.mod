@@ -1,4 +1,4 @@
-module github.com/zoventra/php-debug-studio/daemon
+module zoventra/php-debug-studio/daemon
 
 go 1.22
 
