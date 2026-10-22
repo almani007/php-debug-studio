@@ -155,6 +155,17 @@ func (s *Store) migrate() error {
 		trace_id TEXT
 	);
 
+	CREATE TABLE IF NOT EXISTS db_lock_events (
+		id TEXT PRIMARY KEY,
+		connection_id TEXT NOT NULL,
+		trace_id TEXT,
+		blocker_json TEXT,
+		waiter_json TEXT,
+		lock_resource TEXT,
+		duration_ms INTEGER,
+		occurred_at TEXT NOT NULL
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_traces_proj ON traces(project_id, started_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_spans_trace ON spans(trace_id);
 	CREATE INDEX IF NOT EXISTS idx_sql_trace ON sql_queries(trace_id);
