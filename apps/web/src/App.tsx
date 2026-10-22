@@ -140,6 +140,17 @@ export function App() {
   const [newProjectFramework, setNewProjectFramework] = useState<string>('Laravel');
   const [newProjectPhp, setNewProjectPhp] = useState<string>('8.3');
 
+  // Workspace & Multi-Project state (Module 25)
+  const [projectSubTab, setProjectSubTab] = useState<'projects' | 'workspaces' | 'environments' | 'retention'>('projects');
+  const [workspaces, setWorkspaces] = useState<any[]>([]);
+  const [selectedWorkspaceFilter, setSelectedWorkspaceFilter] = useState<string>('all');
+  const [newWorkspaceName, setNewWorkspaceName] = useState<string>('');
+  const [newWorkspaceDesc, setNewWorkspaceDesc] = useState<string>('');
+  const [projectEnvironments, setProjectEnvironments] = useState<any[]>([]);
+  const [newEnvName, setNewEnvName] = useState<string>('local');
+  const [newEnvKind, setNewEnvKind] = useState<'local' | 'staging' | 'production'>('local');
+  const [newEnvIsProd, setNewEnvIsProd] = useState<boolean>(false);
+
   // Load health, projects, and PHP runtimes on start
   useEffect(() => {
     api.getHealth()
@@ -175,6 +186,86 @@ export function App() {
         }
       })
       .catch(() => {});
+    loadWorkspaces();
+  };
+
+  const loadWorkspaces = () => {
+    api.getWorkspaces()
+      .then((data) => setWorkspaces(data || []))
+      .catch(() => setWorkspaces([]));
+  };
+
+  const loadProjectEnvironments = (projId?: string) => {
+    const id = projId || selectedProjectId;
+    if (!id) return;
+    api.getProjectEnvironments(id)
+      .then((data) => setProjectEnvironments(data || []))
+      .catch(() => setProjectEnvironments([]));
+  };
+
+  const handleCreateWorkspace = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!newWorkspaceName.trim()) return;
+    try {
+      await api.createWorkspace({ name: newWorkspaceName, description: newWorkspaceDesc });
+      setNewWorkspaceName('');
+      setNewWorkspaceDesc('');
+      loadWorkspaces();
+    } catch (err: any) {
+      alert(`Failed to create workspace: ${err.message}`);
+    }
+  };
+
+  const handleDeleteWorkspace = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this workspace?')) return;
+    try {
+      await api.deleteWorkspace(id);
+      loadWorkspaces();
+    } catch (err: any) {
+      alert(`Failed to delete workspace: ${err.message}`);
+    }
+  };
+
+  const handleDeleteProject = async (id: string) => {
+    if (!confirm('Delete this project and its local configuration? (Source files will not be touched).')) return;
+    try {
+      await api.deleteProject(id);
+      loadProjects();
+    } catch (err: any) {
+      alert(`Failed to delete project: ${err.message}`);
+    }
+  };
+
+  const handleAssignWorkspace = async (workspaceId: string, projectId: string) => {
+    try {
+      if (!workspaceId) return;
+      await api.assignProjectWorkspace(workspaceId, projectId);
+      loadProjects();
+      loadWorkspaces();
+    } catch (err: any) {
+      alert(`Failed to assign workspace: ${err.message}`);
+    }
+  };
+
+  const handleCreateEnvironment = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!selectedProjectId) {
+      alert('Please select a project first.');
+      return;
+    }
+    try {
+      await api.createProjectEnvironment(selectedProjectId, {
+        name: newEnvName,
+        kind: newEnvKind,
+        is_production: newEnvIsProd,
+        sampling_rate: 1.0,
+        retention_days: 7,
+      });
+      setNewEnvName('');
+      loadProjectEnvironments(selectedProjectId);
+    } catch (err: any) {
+      alert(`Failed to create environment: ${err.message}`);
+    }
   };
 
   useEffect(() => {
@@ -212,6 +303,9 @@ export function App() {
     } else if (activeTab === 'jsdebug') {
       loadJsSessions();
       loadJsEvents();
+    } else if (activeTab === 'projects') {
+      loadWorkspaces();
+      loadProjectEnvironments();
     } else if (activeTab === 'streams') {
       const ws = new WebSocket('ws://127.0.0.1:8765/v1/events/stream');
       ws.onopen = () => setStreamConnected(true);
@@ -5028,267 +5122,744 @@ window.addEventListener('error', (e) => {
           )}
 
           {activeTab === 'projects' && (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '16px', overflow: 'auto' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '14px', overflow: 'auto' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
                 <div>
-                  <h2 style={{ fontSize: '16px', fontWeight: 600 }}>Multi-Project Workspaces & PHP Versions</h2>
+                  <h2 style={{ fontSize: '16px', fontWeight: 600 }}>Multi-Project Workspaces & Architecture (Module 25)</h2>
                   <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                    Each project can run on its own independently selected PHP version (7.4 through 8.4).
+                    Register projects, organize multi-repo workspaces, manage runtime environments, and configure independent PHP versions (7.4 through 8.4).
                   </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <button
+                    onClick={() => {
+                      loadProjects();
+                      loadWorkspaces();
+                      loadProjectEnvironments();
+                    }}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: 'var(--bg-card)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    🔄 Refresh Workspaces
+                  </button>
                 </div>
               </div>
 
-              {/* Add Project Card */}
-              <form onSubmit={handleCreateProject} style={{
-                backgroundColor: 'var(--bg-card)',
-                border: '1px solid var(--border-color)',
-                borderRadius: '6px',
-                padding: '16px',
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr 120px 140px 100px',
-                gap: '12px',
-                alignItems: 'end'
-              }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                    PROJECT NAME
-                  </label>
-                  <input
-                    type="text"
-                    value={newProjectName}
-                    onChange={(e) => setNewProjectName(e.target.value)}
-                    placeholder="e.g. Care Vision"
-                    required
+              {/* Sub-Navigation Tabs */}
+              <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                {[
+                  { id: 'projects', label: `📁 Projects (${projects.length})` },
+                  { id: 'workspaces', label: `🗂️ Workspaces (${workspaces.length})` },
+                  { id: 'environments', label: `🌐 Environments (${projectEnvironments.length})` },
+                  { id: 'retention', label: '🗑️ Data Retention & Purge' },
+                ].map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => setProjectSubTab(t.id as any)}
                     style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      backgroundColor: 'var(--bg-panel)',
-                      color: 'var(--text-primary)',
-                      border: '1px solid var(--border-color)',
+                      padding: '6px 14px',
                       borderRadius: '6px',
-                      fontSize: '13px'
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                    ROOT PATH
-                  </label>
-                  <input
-                    type="text"
-                    value={newProjectPath}
-                    onChange={(e) => setNewProjectPath(e.target.value)}
-                    placeholder="/Users/pl/Documents/sites/app"
-                    required
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      backgroundColor: 'var(--bg-panel)',
-                      color: 'var(--text-primary)',
                       border: '1px solid var(--border-color)',
-                      borderRadius: '6px',
-                      fontSize: '13px'
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                    FRAMEWORK
-                  </label>
-                  <select
-                    value={newProjectFramework}
-                    onChange={(e) => setNewProjectFramework(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      backgroundColor: 'var(--bg-panel)',
-                      color: 'var(--text-primary)',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: '6px',
-                      fontSize: '13px'
+                      backgroundColor: projectSubTab === t.id ? 'var(--accent)' : 'var(--bg-card)',
+                      color: projectSubTab === t.id ? '#fff' : 'var(--text-secondary)',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer'
                     }}
                   >
-                    <option value="Laravel">Laravel</option>
-                    <option value="Symfony">Symfony</option>
-                    <option value="Plain PHP">Plain PHP</option>
-                    <option value="WordPress">WordPress</option>
-                  </select>
-                </div>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
 
-                <div>
-                  <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                    PHP VERSION
-                  </label>
-                  <select
-                    value={newProjectPhp}
-                    onChange={(e) => setNewProjectPhp(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px',
-                      backgroundColor: 'var(--bg-panel)',
-                      color: 'var(--accent)',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: '6px',
-                      fontSize: '13px',
-                      fontWeight: 600
-                    }}
-                  >
-                    {standardPhpOptions.map((ver) => (
-                      <option key={ver} value={ver}>PHP {ver}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <button
-                  type="submit"
-                  style={{
-                    padding: '8px 16px',
-                    backgroundColor: 'var(--accent)',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: '6px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    height: '35px'
-                  }}
-                >
-                  + Add
-                </button>
-              </form>
-
-              {/* Projects List with PHP Version Selectors */}
-              <div style={{
-                backgroundColor: 'var(--bg-card)',
-                borderRadius: '6px',
-                border: '1px solid var(--border-color)',
-                overflow: 'hidden'
-              }}>
-                {projects.length === 0 ? (
-                  <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                    No projects registered yet. Use the form above to add your first project.
-                  </div>
-                ) : (
-                  projects.map((p) => (
-                    <div key={p.id} style={{
-                      padding: '14px 16px',
-                      borderBottom: '1px solid var(--border-color)',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center'
-                    }}>
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: '14px' }}>{p.name}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>{p.root_path}</div>
-                      </div>
-
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{p.framework || 'PHP'}</span>
-
-                        {/* Interactive PHP Version Selector for each project */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>PHP Version:</span>
-                          <select
-                            value={p.php_version || '8.3'}
-                            onChange={(e) => handleUpdateProjectPhp(p.id, e.target.value)}
+              {/* Sub-Tab 1: Projects Management */}
+              {projectSubTab === 'projects' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  {/* Workspace Filter Bar */}
+                  {workspaces.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>WORKSPACE FILTER:</span>
+                      <button
+                        onClick={() => setSelectedWorkspaceFilter('all')}
+                        style={{
+                          padding: '4px 10px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: selectedWorkspaceFilter === 'all' ? 'var(--accent)' : 'var(--bg-card)',
+                          color: selectedWorkspaceFilter === 'all' ? '#fff' : 'var(--text-secondary)',
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        All ({projects.length})
+                      </button>
+                      {workspaces.map((ws) => {
+                        const count = projects.filter((p) => p.workspace_id === ws.id).length;
+                        return (
+                          <button
+                            key={ws.id}
+                            onClick={() => setSelectedWorkspaceFilter(ws.id)}
                             style={{
-                              padding: '4px 8px',
-                              backgroundColor: 'var(--bg-panel)',
-                              color: 'var(--accent)',
+                              padding: '4px 10px',
+                              borderRadius: '4px',
                               border: '1px solid var(--border-color)',
-                              borderRadius: '6px',
-                              fontSize: '12px',
+                              backgroundColor: selectedWorkspaceFilter === ws.id ? 'var(--accent)' : 'var(--bg-card)',
+                              color: selectedWorkspaceFilter === ws.id ? '#fff' : 'var(--text-secondary)',
+                              fontSize: '11px',
                               fontWeight: 600,
                               cursor: 'pointer'
                             }}
                           >
-                            {standardPhpOptions.map((ver) => (
-                              <option key={ver} value={ver}>PHP {ver}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
+                            {ws.name} ({count})
+                          </button>
+                        );
+                      })}
                     </div>
-                  ))
-                )}
-              </div>
+                  )}
 
-              {/* Data Retention & Local Storage Purge (Module 21 & NFR-06) */}
-              <div style={{
-                backgroundColor: 'var(--bg-card)',
-                borderRadius: '6px',
-                border: '1px solid var(--border-color)',
-                padding: '16px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '12px',
-                marginTop: '10px'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <h3 style={{ fontSize: '14px', fontWeight: 600 }}>🗑️ Data Retention & Storage Purge (NFR-06)</h3>
-                    <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                      Clean up local SQLite database storage by safely purging historical traces, queries, and log records.
-                    </p>
-                  </div>
+                  {/* Add Project Card */}
+                  <form onSubmit={handleCreateProject} style={{
+                    backgroundColor: 'var(--bg-card)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '6px',
+                    padding: '16px',
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr 120px 140px 100px',
+                    gap: '12px',
+                    alignItems: 'end'
+                  }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                        PROJECT NAME
+                      </label>
+                      <input
+                        type="text"
+                        value={newProjectName}
+                        onChange={(e) => setNewProjectName(e.target.value)}
+                        placeholder="e.g. Care Vision"
+                        required
+                        style={{
+                          width: '100%',
+                          padding: '8px 12px',
+                          backgroundColor: 'var(--bg-panel)',
+                          color: 'var(--text-primary)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '6px',
+                          fontSize: '13px'
+                        }}
+                      />
+                    </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <select
-                      value={purgeDays}
-                      onChange={(e) => setPurgeDays(Number(e.target.value))}
-                      style={{
-                        padding: '6px 10px',
-                        backgroundColor: 'var(--bg-panel)',
-                        color: 'var(--text-primary)',
-                        border: '1px solid var(--border-color)',
-                        borderRadius: '6px',
-                        fontSize: '12px',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      <option value={1}>Older than 1 day</option>
-                      <option value={7}>Older than 7 days</option>
-                      <option value={14}>Older than 14 days</option>
-                      <option value={30}>Older than 30 days</option>
-                    </select>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                        ROOT PATH
+                      </label>
+                      <input
+                        type="text"
+                        value={newProjectPath}
+                        onChange={(e) => setNewProjectPath(e.target.value)}
+                        placeholder="/Users/pl/Documents/sites/app"
+                        required
+                        style={{
+                          width: '100%',
+                          padding: '8px 12px',
+                          backgroundColor: 'var(--bg-panel)',
+                          color: 'var(--text-primary)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '6px',
+                          fontSize: '13px'
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                        FRAMEWORK
+                      </label>
+                      <select
+                        value={newProjectFramework}
+                        onChange={(e) => setNewProjectFramework(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '8px 12px',
+                          backgroundColor: 'var(--bg-panel)',
+                          color: 'var(--text-primary)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '6px',
+                          fontSize: '13px'
+                        }}
+                      >
+                        <option value="Laravel">Laravel</option>
+                        <option value="Symfony">Symfony</option>
+                        <option value="Plain PHP">Plain PHP</option>
+                        <option value="WordPress">WordPress</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                        PHP VERSION
+                      </label>
+                      <select
+                        value={newProjectPhp}
+                        onChange={(e) => setNewProjectPhp(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '8px 12px',
+                          backgroundColor: 'var(--bg-panel)',
+                          color: 'var(--accent)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '6px',
+                          fontSize: '13px',
+                          fontWeight: 600
+                        }}
+                      >
+                        {standardPhpOptions.map((ver) => (
+                          <option key={ver} value={ver}>PHP {ver}</option>
+                        ))}
+                      </select>
+                    </div>
 
                     <button
-                      onClick={handlePurgeTelemetry}
-                      disabled={purgeLoading}
+                      type="submit"
                       style={{
-                        padding: '6px 14px',
-                        backgroundColor: 'rgba(248, 81, 73, 0.15)',
-                        color: 'var(--danger)',
-                        border: '1px solid var(--danger)',
+                        padding: '8px 16px',
+                        backgroundColor: 'var(--accent)',
+                        color: '#fff',
+                        border: 'none',
                         borderRadius: '6px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        height: '35px'
+                      }}
+                    >
+                      + Add
+                    </button>
+                  </form>
+
+                  {/* Projects List */}
+                  <div style={{
+                    backgroundColor: 'var(--bg-card)',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-color)',
+                    overflow: 'hidden'
+                  }}>
+                    {projects.length === 0 ? (
+                      <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                        No projects registered yet. Use the form above to add your first project.
+                      </div>
+                    ) : (
+                      projects
+                        .filter((p) => selectedWorkspaceFilter === 'all' || p.workspace_id === selectedWorkspaceFilter)
+                        .map((p) => (
+                          <div key={p.id} style={{
+                            padding: '14px 16px',
+                            borderBottom: '1px solid var(--border-color)',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            flexWrap: 'wrap',
+                            gap: '12px'
+                          }}>
+                            <div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ fontWeight: 600, fontSize: '14px' }}>{p.name}</span>
+                                <span style={{
+                                  fontSize: '10px',
+                                  fontWeight: 700,
+                                  padding: '2px 6px',
+                                  borderRadius: '3px',
+                                  backgroundColor: 'rgba(88, 166, 255, 0.15)',
+                                  color: 'var(--accent)',
+                                  textTransform: 'uppercase'
+                                }}>
+                                  {p.framework || 'PHP'}
+                                </span>
+                              </div>
+                              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px', fontFamily: 'monospace' }}>
+                                {p.root_path}
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                              {/* Workspace assignment */}
+                              {workspaces.length > 0 && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Workspace:</span>
+                                  <select
+                                    value={p.workspace_id || ''}
+                                    onChange={(e) => handleAssignWorkspace(e.target.value, p.id)}
+                                    style={{
+                                      padding: '4px 8px',
+                                      backgroundColor: 'var(--bg-panel)',
+                                      color: 'var(--text-primary)',
+                                      border: '1px solid var(--border-color)',
+                                      borderRadius: '4px',
+                                      fontSize: '11px'
+                                    }}
+                                  >
+                                    <option value="">(None / Default)</option>
+                                    {workspaces.map((ws) => (
+                                      <option key={ws.id} value={ws.id}>{ws.name}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
+
+                              {/* Interactive PHP Version Selector */}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>PHP Version:</span>
+                                <select
+                                  value={p.php_version || '8.3'}
+                                  onChange={(e) => handleUpdateProjectPhp(p.id, e.target.value)}
+                                  style={{
+                                    padding: '4px 8px',
+                                    backgroundColor: 'var(--bg-panel)',
+                                    color: 'var(--accent)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: '6px',
+                                    fontSize: '12px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  {standardPhpOptions.map((ver) => (
+                                    <option key={ver} value={ver}>PHP {ver}</option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <button
+                                onClick={() => {
+                                  setSelectedProjectId(p.id);
+                                  setProjectSubTab('environments');
+                                  loadProjectEnvironments(p.id);
+                                }}
+                                style={{
+                                  padding: '4px 8px',
+                                  borderRadius: '4px',
+                                  border: '1px solid var(--border-color)',
+                                  backgroundColor: 'transparent',
+                                  color: 'var(--text-primary)',
+                                  fontSize: '11px',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                🌐 Envs
+                              </button>
+
+                              <button
+                                onClick={() => handleDeleteProject(p.id)}
+                                style={{
+                                  padding: '4px 8px',
+                                  borderRadius: '4px',
+                                  border: '1px solid var(--border-color)',
+                                  backgroundColor: 'transparent',
+                                  color: 'var(--danger)',
+                                  fontSize: '11px',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Sub-Tab 2: Workspaces Management */}
+              {projectSubTab === 'workspaces' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '12px' }}>
+                  {/* Create Workspace Form */}
+                  <form
+                    onSubmit={handleCreateWorkspace}
+                    style={{
+                      padding: '14px',
+                      borderRadius: '6px',
+                      backgroundColor: 'var(--bg-card)',
+                      border: '1px solid var(--border-color)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px'
+                    }}
+                  >
+                    <div style={{ fontSize: '13px', fontWeight: 600 }}>Create Workspace</div>
+                    <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>
+                      Group microservices, frontend repos, and backend APIs into unified debug workspaces.
+                    </p>
+
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                        WORKSPACE NAME
+                      </label>
+                      <input
+                        type="text"
+                        value={newWorkspaceName}
+                        onChange={(e) => setNewWorkspaceName(e.target.value)}
+                        placeholder="e.g. Care Vision Suite"
+                        required
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: 'var(--bg-main)',
+                          color: 'var(--text-primary)',
+                          fontSize: '12px'
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                        DESCRIPTION
+                      </label>
+                      <input
+                        type="text"
+                        value={newWorkspaceDesc}
+                        onChange={(e) => setNewWorkspaceDesc(e.target.value)}
+                        placeholder="e.g. Monorepo backend & services"
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: 'var(--bg-main)',
+                          color: 'var(--text-primary)',
+                          fontSize: '12px'
+                        }}
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      style={{
+                        padding: '8px',
+                        backgroundColor: 'var(--accent)',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '4px',
                         fontSize: '12px',
                         fontWeight: 600,
                         cursor: 'pointer'
                       }}
                     >
-                      {purgeLoading ? 'Purging...' : 'Purge Old Telemetry'}
+                      ➕ Create Workspace
                     </button>
+                  </form>
+
+                  {/* Workspaces List */}
+                  <div style={{
+                    backgroundColor: 'var(--bg-card)',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-color)',
+                    overflow: 'hidden',
+                    display: 'flex',
+                    flexDirection: 'column'
+                  }}>
+                    <div style={{
+                      padding: '10px 14px',
+                      borderBottom: '1px solid var(--border-color)',
+                      fontSize: '12px',
+                      fontWeight: 600
+                    }}>
+                      REGISTERED WORKSPACES ({workspaces.length})
+                    </div>
+
+                    <div style={{ flex: 1, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {workspaces.length === 0 ? (
+                        <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '12px' }}>
+                          No workspaces created yet. Use the form to group your projects.
+                        </div>
+                      ) : (
+                        workspaces.map((ws) => {
+                          const assignedProjects = projects.filter((p) => p.workspace_id === ws.id);
+                          return (
+                            <div
+                              key={ws.id}
+                              style={{
+                                padding: '12px 14px',
+                                borderRadius: '6px',
+                                backgroundColor: 'var(--bg-main)',
+                                border: '1px solid var(--border-color)',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center'
+                              }}
+                            >
+                              <div>
+                                <div style={{ fontSize: '13px', fontWeight: 600 }}>{ws.name}</div>
+                                <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                                  {ws.description || 'No description'} • {assignedProjects.length} project(s) assigned
+                                </div>
+                              </div>
+
+                              <button
+                                onClick={() => handleDeleteWorkspace(ws.id)}
+                                style={{
+                                  background: 'none',
+                                  border: 'none',
+                                  color: 'var(--danger)',
+                                  fontSize: '12px',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
                   </div>
                 </div>
+              )}
 
-                {purgeResult && (
+              {/* Sub-Tab 3: Environments Management */}
+              {projectSubTab === 'environments' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '12px' }}>
+                  {/* Create Environment Form */}
+                  <form
+                    onSubmit={handleCreateEnvironment}
+                    style={{
+                      padding: '14px',
+                      borderRadius: '6px',
+                      backgroundColor: 'var(--bg-card)',
+                      border: '1px solid var(--border-color)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px'
+                    }}
+                  >
+                    <div style={{ fontSize: '13px', fontWeight: 600 }}>Add Environment</div>
+                    <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>
+                      Configure isolation environments (local, staging, testing) and sampling rates for <strong>{activeProject?.name || 'Selected Project'}</strong>.
+                    </p>
+
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                        ENVIRONMENT NAME
+                      </label>
+                      <input
+                        type="text"
+                        value={newEnvName}
+                        onChange={(e) => setNewEnvName(e.target.value)}
+                        placeholder="e.g. local, docker-dev, staging"
+                        required
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: 'var(--bg-main)',
+                          color: 'var(--text-primary)',
+                          fontSize: '12px'
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                        KIND
+                      </label>
+                      <select
+                        value={newEnvKind}
+                        onChange={(e) => setNewEnvKind(e.target.value as any)}
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: 'var(--bg-main)',
+                          color: 'var(--text-primary)',
+                          fontSize: '12px'
+                        }}
+                      >
+                        <option value="local">Local</option>
+                        <option value="staging">Staging</option>
+                        <option value="production">Production (Sanitized)</option>
+                      </select>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <input
+                        type="checkbox"
+                        id="isProdToggle"
+                        checked={newEnvIsProd}
+                        onChange={(e) => setNewEnvIsProd(e.target.checked)}
+                      />
+                      <label htmlFor="isProdToggle" style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                        Mark as Production (Enforces strict data redaction)
+                      </label>
+                    </div>
+
+                    <button
+                      type="submit"
+                      style={{
+                        padding: '8px',
+                        backgroundColor: 'var(--accent)',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      ➕ Add Environment
+                    </button>
+                  </form>
+
+                  {/* Environments List */}
                   <div style={{
-                    fontSize: '12px',
-                    padding: '8px 12px',
-                    backgroundColor: 'var(--bg-panel)',
-                    borderRadius: '4px',
+                    backgroundColor: 'var(--bg-card)',
+                    borderRadius: '6px',
                     border: '1px solid var(--border-color)',
+                    overflow: 'hidden',
                     display: 'flex',
-                    gap: '16px',
-                    color: 'var(--success)'
+                    flexDirection: 'column'
                   }}>
-                    <span>✔ Deleted Traces: {purgeResult.deleted_traces || 0}</span>
-                    <span>✔ Deleted Queries: {purgeResult.deleted_queries || 0}</span>
-                    <span>✔ Deleted Logs: {purgeResult.deleted_logs || 0}</span>
+                    <div style={{
+                      padding: '10px 14px',
+                      borderBottom: '1px solid var(--border-color)',
+                      fontSize: '12px',
+                      fontWeight: 600
+                    }}>
+                      ENVIRONMENTS FOR {activeProject?.name?.toUpperCase() || 'PROJECT'} ({projectEnvironments.length})
+                    </div>
+
+                    <div style={{ flex: 1, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {projectEnvironments.length === 0 ? (
+                        <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                          No specific environments configured yet. Default local environment is active.
+                        </div>
+                      ) : (
+                        projectEnvironments.map((env) => (
+                          <div
+                            key={env.id}
+                            style={{
+                              padding: '12px 14px',
+                              borderRadius: '6px',
+                              backgroundColor: 'var(--bg-main)',
+                              border: '1px solid var(--border-color)',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center'
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <span style={{
+                                fontSize: '10px',
+                                fontWeight: 700,
+                                padding: '2px 6px',
+                                borderRadius: '3px',
+                                backgroundColor: env.is_production ? 'var(--danger)' : 'var(--accent)',
+                                color: '#fff',
+                                textTransform: 'uppercase'
+                              }}>
+                                {env.kind}
+                              </span>
+                              <span style={{ fontSize: '13px', fontWeight: 600 }}>{env.name}</span>
+                              <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                                Sampling: {Math.round((env.sampling_rate || 1.0) * 100)}% • TTL: {env.retention_days || 7}d
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
+
+              {/* Sub-Tab 4: Data Retention & Local Storage Purge (Module 21 & NFR-06) */}
+              {projectSubTab === 'retention' && (
+                <div style={{
+                  backgroundColor: 'var(--bg-card)',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-color)',
+                  padding: '20px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '16px'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <h3 style={{ fontSize: '14px', fontWeight: 600 }}>🗑️ Data Retention & Storage Purge (NFR-06)</h3>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                        Clean up local SQLite database storage by safely purging historical traces, queries, and log records.
+                      </p>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <select
+                        value={purgeDays}
+                        onChange={(e) => setPurgeDays(Number(e.target.value))}
+                        style={{
+                          padding: '6px 10px',
+                          backgroundColor: 'var(--bg-panel)',
+                          color: 'var(--text-primary)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '6px',
+                          fontSize: '12px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <option value={1}>Older than 1 day</option>
+                        <option value={7}>Older than 7 days</option>
+                        <option value={14}>Older than 14 days</option>
+                        <option value={30}>Older than 30 days</option>
+                      </select>
+
+                      <button
+                        onClick={handlePurgeTelemetry}
+                        disabled={purgeLoading}
+                        style={{
+                          padding: '6px 14px',
+                          backgroundColor: 'rgba(248, 81, 73, 0.15)',
+                          color: 'var(--danger)',
+                          border: '1px solid var(--danger)',
+                          borderRadius: '6px',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {purgeLoading ? 'Purging...' : 'Purge Old Telemetry'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {purgeResult && (
+                    <div style={{
+                      fontSize: '12px',
+                      padding: '8px 12px',
+                      backgroundColor: 'var(--bg-panel)',
+                      borderRadius: '4px',
+                      border: '1px solid var(--border-color)',
+                      display: 'flex',
+                      gap: '16px',
+                      color: 'var(--success)'
+                    }}>
+                      <span>✔ Deleted Traces: {purgeResult.deleted_traces || 0}</span>
+                      <span>✔ Deleted Queries: {purgeResult.deleted_queries || 0}</span>
+                      <span>✔ Deleted Logs: {purgeResult.deleted_logs || 0}</span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </main>

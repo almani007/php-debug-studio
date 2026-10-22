@@ -111,4 +111,20 @@ export const api = {
     request<any>(`/db/recommendations/${recId}/status`, { method: 'POST', body: JSON.stringify({ status }) }),
   explainSQL: (sql: string, driver?: string) =>
     request<any>('/db/explain', { method: 'POST', body: JSON.stringify({ sql, driver: driver || 'mysql' }) }),
+  deleteProject: (id: string) =>
+    request<any>(`/projects/${id}`, { method: 'DELETE' }),
+  getWorkspaces: () =>
+    request<any[]>('/workspaces'),
+  createWorkspace: (data: { name: string; description?: string }) =>
+    request<any>('/workspaces', { method: 'POST', body: JSON.stringify(data) }),
+  deleteWorkspace: (id: string) =>
+    request<any>(`/workspaces/${id}`, { method: 'DELETE' }),
+  assignProjectWorkspace: (workspaceId: string, projectId: string) =>
+    request<any>(`/workspaces/${workspaceId}/projects`, { method: 'POST', body: JSON.stringify({ project_id: projectId }) }),
+  removeProjectWorkspace: (workspaceId: string, projectId: string) =>
+    request<any>(`/workspaces/${workspaceId}/projects/${projectId}`, { method: 'DELETE' }),
+  getProjectEnvironments: (projectId: string) =>
+    request<any[]>(`/projects/${projectId}/environments`),
+  createProjectEnvironment: (projectId: string, data: { name: string; kind?: string; is_production?: boolean; sampling_rate?: number; retention_days?: number }) =>
+    request<any>(`/projects/${projectId}/environments`, { method: 'POST', body: JSON.stringify(data) }),
 };

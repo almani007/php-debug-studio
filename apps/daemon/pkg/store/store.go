@@ -290,6 +290,19 @@ func (s *Store) migrate() error {
 		approval_status TEXT DEFAULT 'pending'
 	);
 
+	CREATE TABLE IF NOT EXISTS workspaces (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		description TEXT,
+		created_at TEXT NOT NULL
+	);
+
+	CREATE TABLE IF NOT EXISTS workspace_projects (
+		workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+		project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+		PRIMARY KEY (workspace_id, project_id)
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_traces_proj ON traces(project_id, started_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_spans_trace ON spans(trace_id);
 	CREATE INDEX IF NOT EXISTS idx_sql_trace ON sql_queries(trace_id);
@@ -302,6 +315,7 @@ func (s *Store) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_db_conns_proj ON db_connections(project_id);
 	CREATE INDEX IF NOT EXISTS idx_db_findings_proj ON db_findings(project_id, created_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_db_recs_finding ON db_recommendations(finding_id);
+	CREATE INDEX IF NOT EXISTS idx_workspace_proj ON workspace_projects(workspace_id);
 	`
 	_, err := s.db.Exec(schema)
 	return err

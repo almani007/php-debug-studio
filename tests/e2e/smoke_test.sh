@@ -24,6 +24,7 @@ test -f apps/daemon/pkg/store/queue.go && echo "  ✔ Queue diagnostics store fo
 test -f apps/daemon/pkg/store/webhook_events.go && echo "  ✔ Webhook events store found"
 test -f apps/daemon/pkg/store/js_debug.go && echo "  ✔ JavaScript debug store found"
 test -f apps/daemon/pkg/store/db_advisor.go && echo "  ✔ Database advisor store found"
+test -f apps/daemon/pkg/store/workspaces.go && echo "  ✔ Multi-project workspaces store found"
 test -f apps/daemon/pkg/executor/http.go && echo "  ✔ Execution engine found"
 test -f apps/daemon/pkg/executor/artisan.go && echo "  ✔ Safe Artisan executor found"
 test -f apps/daemon/pkg/executor/testrunner.go && echo "  ✔ Isolated test runner found"

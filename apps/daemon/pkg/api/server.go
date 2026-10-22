@@ -109,6 +109,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/health", s.handleHealth)
 	s.mux.HandleFunc("/v1/projects", s.handleProjects)
 	s.mux.HandleFunc("/v1/projects/", s.handleProjectDetail)
+	s.mux.HandleFunc("/v1/workspaces", s.handleWorkspaces)
+	s.mux.HandleFunc("/v1/workspaces/", s.handleWorkspaceDetail)
 	s.mux.HandleFunc("/v1/requests/execute", s.handleExecuteRequest)
 	s.mux.HandleFunc("/v1/events/ingest", s.handleIngestEvents)
 	s.mux.HandleFunc("/v1/traces", s.handleTraces)
@@ -584,6 +586,47 @@ func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Handle DELETE /v1/projects/{id}
+	if r.Method == http.MethodDelete && !strings.Contains(id, "/") {
+		if err := s.store.DeleteProject(id); err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, map[string]bool{"deleted": true}, nil)
+		return
+	}
+
+	// Handle GET & POST /v1/projects/{id}/environments
+	if strings.HasSuffix(id, "/environments") {
+		cleanID := strings.TrimSuffix(id, "/environments")
+		if r.Method == http.MethodGet {
+			envs, err := s.store.ListProjectEnvironments(cleanID)
+			if err != nil {
+				s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+				return
+			}
+			s.jsonResponse(w, http.StatusOK, envs, nil)
+			return
+		} else if r.Method == http.MethodPost {
+			var env store.ProjectEnvironment
+			if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
+				s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+				return
+			}
+			env.ProjectID = cleanID
+			envID, err := s.store.CreateProjectEnvironment(env)
+			if err != nil {
+				s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+				return
+			}
+			env.ID = envID
+			s.jsonResponse(w, http.StatusCreated, env, nil)
+			return
+		}
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
 	// Handle GET /v1/projects/{id}/export
 	if strings.HasSuffix(id, "/export") {
 		cleanID := strings.TrimSuffix(id, "/export")
@@ -626,6 +669,91 @@ func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.jsonResponse(w, http.StatusOK, p, nil)
+}
+
+func (s *Server) handleWorkspaces(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		workspaces, err := s.store.ListWorkspaces()
+		if err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, workspaces, nil)
+
+	case http.MethodPost:
+		var ws store.Workspace
+		if err := json.NewDecoder(r.Body).Decode(&ws); err != nil {
+			s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+			return
+		}
+		if ws.Name == "" {
+			s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "VALIDATION_FAILED", Message: "name is required"})
+			return
+		}
+		id, err := s.store.CreateWorkspace(ws)
+		if err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		ws.ID = id
+		s.jsonResponse(w, http.StatusCreated, ws, nil)
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleWorkspaceDetail(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 3 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	workspaceID := parts[2]
+
+	// Handle DELETE /v1/workspaces/{id}
+	if len(parts) == 3 && r.Method == http.MethodDelete {
+		if err := s.store.DeleteWorkspace(workspaceID); err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, map[string]bool{"deleted": true}, nil)
+		return
+	}
+
+	// Handle POST /v1/workspaces/{id}/projects
+	if len(parts) >= 4 && parts[3] == "projects" {
+		if r.Method == http.MethodPost {
+			var req struct {
+				ProjectID string `json:"project_id"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req.ProjectID == "" {
+				s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "MISSING_ID", Message: "project_id is required"})
+				return
+			}
+			if err := s.store.AssignProjectToWorkspace(workspaceID, req.ProjectID); err != nil {
+				s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+				return
+			}
+			s.jsonResponse(w, http.StatusOK, map[string]bool{"assigned": true}, nil)
+			return
+		}
+
+		// Handle DELETE /v1/workspaces/{id}/projects/{project_id}
+		if len(parts) >= 5 && r.Method == http.MethodDelete {
+			projectID := parts[4]
+			if err := s.store.RemoveProjectFromWorkspace(workspaceID, projectID); err != nil {
+				s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+				return
+			}
+			s.jsonResponse(w, http.StatusOK, map[string]bool{"removed": true}, nil)
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusMethodNotAllowed)
 }
 
 func (s *Server) handleExecuteRequest(w http.ResponseWriter, r *http.Request) {
