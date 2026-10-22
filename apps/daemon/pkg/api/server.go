@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zoventra/php-debug-studio/daemon/pkg/auth"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/dbgp"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/executor"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/mock"
@@ -125,6 +126,38 @@ func (s *Server) registerRoutes() {
 
 	// Webhook Simulator (Module 22 & WH-007)
 	s.mux.HandleFunc("/v1/webhooks/simulate", s.handleWebhookSimulate)
+
+	// OAuth2 PKCE (Module 04)
+	s.mux.HandleFunc("/v1/auth/pkce", s.handleAuthPKCE)
+
+	// Audit Logging (Module 25 & SEC-10)
+	s.mux.HandleFunc("/v1/audit", s.handleAuditEvents)
+}
+
+func (s *Server) handleAuthPKCE(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	challenge, err := auth.GeneratePKCE()
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "PKCE_ERROR", Message: err.Error()})
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, challenge, nil)
+}
+
+func (s *Server) handleAuditEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	events, err := s.store.ListAuditEvents(50)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, events, nil)
 }
 
 func (s *Server) handleGraphQLExecute(w http.ResponseWriter, r *http.Request) {

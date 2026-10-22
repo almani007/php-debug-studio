@@ -166,6 +166,16 @@ func (s *Store) migrate() error {
 		occurred_at TEXT NOT NULL
 	);
 
+	CREATE TABLE IF NOT EXISTS audit_events (
+		id TEXT PRIMARY KEY,
+		actor TEXT NOT NULL,
+		action TEXT NOT NULL,
+		target_type TEXT NOT NULL,
+		target_id TEXT NOT NULL,
+		detail_masked_json TEXT,
+		created_at TEXT NOT NULL
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_traces_proj ON traces(project_id, started_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_spans_trace ON spans(trace_id);
 	CREATE INDEX IF NOT EXISTS idx_sql_trace ON sql_queries(trace_id);
