@@ -86,6 +86,18 @@ export function App() {
   const [sqlAnalytics, setSqlAnalytics] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
 
+  // Database Debug Studio & Solution Advisor state (Module 24)
+  const [dbSubTab, setDbSubTab] = useState<'queries' | 'advisor' | 'explain' | 'connections'>('queries');
+  const [dbConnections, setDbConnections] = useState<any[]>([]);
+  const [newDbConnName, setNewDbConnName] = useState<string>('primary');
+  const [newDbConnDriver, setNewDbConnDriver] = useState<string>('mysql');
+  const [dbFindings, setDbFindings] = useState<any[]>([]);
+  const [dbAdvisorLoading, setDbAdvisorLoading] = useState<boolean>(false);
+  const [explainSqlInput, setExplainSqlInput] = useState<string>('SELECT * FROM users WHERE status = "active" ORDER BY created_at DESC;');
+  const [explainDriver, setExplainDriver] = useState<string>('mysql');
+  const [explainResult, setExplainResult] = useState<any | null>(null);
+  const [explainLoading, setExplainLoading] = useState<boolean>(false);
+
   // Test Studio & Artisan state
   const [testOutput, setTestOutput] = useState<any>(null);
   const [testLoading, setTestLoading] = useState<boolean>(false);
@@ -174,6 +186,8 @@ export function App() {
       api.getSQLAnalytics(selectedProjectId)
         .then((data) => setSqlAnalytics(data || []))
         .catch(() => setSqlAnalytics([]));
+      loadDBConnections();
+      loadDBFindings();
     } else if (activeTab === 'logs') {
       api.getLogs(selectedProjectId)
         .then((data) => setLogs(data || []))
@@ -716,6 +730,83 @@ export function App() {
     }
   };
 
+  const loadDBConnections = () => {
+    api.getDBConnections(selectedProjectId)
+      .then((data) => setDbConnections(data || []))
+      .catch(() => setDbConnections([]));
+  };
+
+  const handleCreateDBConnection = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!newDbConnName.trim()) return;
+    try {
+      await api.createDBConnection({
+        project_id: selectedProjectId || (projects[0]?.id || 'default'),
+        name: newDbConnName,
+        driver: newDbConnDriver,
+        readonly: true,
+      });
+      setNewDbConnName('');
+      loadDBConnections();
+    } catch (err: any) {
+      alert(`Failed to add connection: ${err.message}`);
+    }
+  };
+
+  const handleDeleteDBConnection = async (id: string) => {
+    try {
+      await api.deleteDBConnection(id);
+      loadDBConnections();
+    } catch (err: any) {
+      alert(`Failed to delete connection: ${err.message}`);
+    }
+  };
+
+  const loadDBFindings = () => {
+    const projId = selectedProjectId || (projects[0]?.id || 'default');
+    api.getDBFindings(projId)
+      .then((data) => setDbFindings(data || []))
+      .catch(() => setDbFindings([]));
+  };
+
+  const handleRunDBAdvisor = async () => {
+    const projId = selectedProjectId || (projects[0]?.id || 'default');
+    setDbAdvisorLoading(true);
+    try {
+      const findings = await api.analyzeDB(projId);
+      setDbFindings(findings || []);
+      alert(`Workload analysis complete! Found ${findings?.length || 0} optimization opportunities.`);
+    } catch (err: any) {
+      alert(`Analysis failed: ${err.message}`);
+    } finally {
+      setDbAdvisorLoading(false);
+    }
+  };
+
+  const handleUpdateRecStatus = async (recId: string, status: 'approved' | 'dismissed') => {
+    try {
+      await api.updateRecommendationStatus(recId, status);
+      loadDBFindings();
+    } catch (err: any) {
+      alert(`Failed to update recommendation: ${err.message}`);
+    }
+  };
+
+  const handleRunExplain = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!explainSqlInput.trim()) return;
+    setExplainLoading(true);
+    setExplainResult(null);
+    try {
+      const res = await api.explainSQL(explainSqlInput, explainDriver);
+      setExplainResult(res);
+    } catch (err: any) {
+      alert(`Explain failed: ${err.message}`);
+    } finally {
+      setExplainLoading(false);
+    }
+  };
+
   // Keyboard Shortcuts & WCAG 2.1 AA Navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1045,7 +1136,7 @@ export function App() {
           {[
             { id: 'api', label: '⚡ API Studio' },
             { id: 'traces', label: '🌊 Traces & Waterfall' },
-            { id: 'sql', label: '🗄️ SQL Studio' },
+            { id: 'sql', label: '🗄️ Database & Solution Advisor' },
             { id: 'logs', label: '📜 Logs & Correlation' },
             { id: 'tests', label: '🧪 Test Studio' },
             { id: 'artisan', label: '⚡ Artisan Console' },
@@ -1757,67 +1848,750 @@ export function App() {
           )}
 
           {activeTab === 'sql' && (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '12px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '14px', overflow: 'hidden' }}>
+              {/* Header and Controls */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
                 <div>
-                  <h2 style={{ fontSize: '16px', fontWeight: 600 }}>SQL Studio & Slow Query Analytics</h2>
+                  <h2 style={{ fontSize: '16px', fontWeight: 600 }}>Database Debug Studio & Solution Advisor (Module 24)</h2>
                   <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                    Aggregates query fingerprints, tracking latency percentiles and highlighting queries exceeding 50ms.
+                    Workload telemetry, slow queries, N+1 pattern detection, safe EXPLAIN plan visualizer, and candidate index/code recommendations.
                   </p>
                 </div>
+
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <button
+                    onClick={handleRunDBAdvisor}
+                    disabled={dbAdvisorLoading}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: 'var(--accent)',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {dbAdvisorLoading ? 'Analyzing...' : '🚀 Run Workload Advisor'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (selectedProjectId) {
+                        api.getSQLAnalytics(selectedProjectId).then((data) => setSqlAnalytics(data || []));
+                        loadDBFindings();
+                        loadDBConnections();
+                      }
+                    }}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: 'var(--bg-card)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    🔄 Refresh
+                  </button>
+                </div>
               </div>
-              <div style={{
-                flex: 1,
-                backgroundColor: 'var(--bg-card)',
-                borderRadius: '6px',
-                border: '1px solid var(--border-color)',
-                overflow: 'auto'
-              }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                  <thead>
-                    <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>
-                      <th style={{ padding: '8px 12px' }}>SQL Template</th>
-                      <th style={{ padding: '8px 12px' }}>Count</th>
-                      <th style={{ padding: '8px 12px' }}>Total Time</th>
-                      <th style={{ padding: '8px 12px' }}>Avg Time</th>
-                      <th style={{ padding: '8px 12px' }}>Max Time</th>
-                      <th style={{ padding: '8px 12px' }}>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sqlAnalytics.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                          No SQL executions recorded yet. Invoke an endpoint that queries your database.
-                        </td>
-                      </tr>
-                    ) : (
-                      sqlAnalytics.map((q, idx) => (
-                        <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                          <td style={{ padding: '8px 12px', fontFamily: 'monospace', maxWidth: '400px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {q.sql_template}
-                          </td>
-                          <td style={{ padding: '8px 12px' }}>{q.execution_count}x</td>
-                          <td style={{ padding: '8px 12px' }}>{Math.round(q.total_duration_us / 1000)} ms</td>
-                          <td style={{ padding: '8px 12px' }}>{Math.round(q.avg_duration_us / 1000)} ms</td>
-                          <td style={{ padding: '8px 12px' }}>{Math.round(q.max_duration_us / 1000)} ms</td>
-                          <td style={{ padding: '8px 12px' }}>
-                            {q.is_slow ? (
-                              <span style={{ padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(248, 81, 73, 0.15)', color: 'var(--danger)', fontSize: '11px', fontWeight: 600 }}>
-                                SLOW
-                              </span>
-                            ) : (
-                              <span style={{ padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(63, 185, 80, 0.15)', color: 'var(--success)', fontSize: '11px', fontWeight: 600 }}>
-                                FAST
-                              </span>
-                            )}
-                          </td>
+
+              {/* Sub-Navigation Tabs */}
+              <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                {[
+                  { id: 'queries', label: `📊 Query Explorer & Analytics (${sqlAnalytics.length})` },
+                  { id: 'advisor', label: `💡 Solution Advisor (${dbFindings.length})` },
+                  { id: 'explain', label: '🔍 Safe EXPLAIN Visualizer' },
+                  { id: 'connections', label: `🔌 Connections (${dbConnections.length})` },
+                ].map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => setDbSubTab(t.id as any)}
+                    style={{
+                      padding: '6px 14px',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border-color)',
+                      backgroundColor: dbSubTab === t.id ? 'var(--accent)' : 'var(--bg-card)',
+                      color: dbSubTab === t.id ? '#fff' : 'var(--text-secondary)',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Sub-Tab 1: Query Explorer & Analytics */}
+              {dbSubTab === 'queries' && (
+                <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '12px', overflow: 'hidden' }}>
+                  {/* Summary Metric Cards */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
+                    <div style={{ padding: '12px', borderRadius: '6px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>RECORDED TEMPLATES</div>
+                      <div style={{ fontSize: '20px', fontWeight: 700, marginTop: '4px' }}>{sqlAnalytics.length}</div>
+                    </div>
+                    <div style={{ padding: '12px', borderRadius: '6px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+                      <div style={{ fontSize: '11px', color: 'var(--danger)', fontWeight: 600 }}>SLOW QUERIES (>50ms)</div>
+                      <div style={{ fontSize: '20px', fontWeight: 700, color: 'var(--danger)', marginTop: '4px' }}>
+                        {sqlAnalytics.filter((q) => q.is_slow).length}
+                      </div>
+                    </div>
+                    <div style={{ padding: '12px', borderRadius: '6px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>MAX LATENCY</div>
+                      <div style={{ fontSize: '20px', fontWeight: 700, marginTop: '4px' }}>
+                        {sqlAnalytics.length > 0 ? `${Math.round(Math.max(...sqlAnalytics.map((q) => q.max_duration_us)) / 1000)} ms` : '0 ms'}
+                      </div>
+                    </div>
+                    <div style={{ padding: '12px', borderRadius: '6px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>TOTAL EXECUTIONS</div>
+                      <div style={{ fontSize: '20px', fontWeight: 700, marginTop: '4px' }}>
+                        {sqlAnalytics.reduce((acc, q) => acc + (q.execution_count || 0), 0)}x
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* SQL Queries Table */}
+                  <div style={{
+                    flex: 1,
+                    backgroundColor: 'var(--bg-card)',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-color)',
+                    overflow: 'auto'
+                  }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                      <thead>
+                        <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>
+                          <th style={{ padding: '8px 12px' }}>SQL Template</th>
+                          <th style={{ padding: '8px 12px' }}>Count</th>
+                          <th style={{ padding: '8px 12px' }}>Total Time</th>
+                          <th style={{ padding: '8px 12px' }}>Avg Time</th>
+                          <th style={{ padding: '8px 12px' }}>Max Time</th>
+                          <th style={{ padding: '8px 12px' }}>Status</th>
+                          <th style={{ padding: '8px 12px' }}>Actions</th>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                      </thead>
+                      <tbody>
+                        {sqlAnalytics.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                              No SQL executions recorded yet. Invoke an endpoint that queries your database.
+                            </td>
+                          </tr>
+                        ) : (
+                          sqlAnalytics.map((q, idx) => (
+                            <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                              <td style={{ padding: '8px 12px', fontFamily: 'monospace', maxWidth: '420px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {q.sql_template}
+                              </td>
+                              <td style={{ padding: '8px 12px' }}>{q.execution_count}x</td>
+                              <td style={{ padding: '8px 12px' }}>{Math.round(q.total_duration_us / 1000)} ms</td>
+                              <td style={{ padding: '8px 12px' }}>{Math.round(q.avg_duration_us / 1000)} ms</td>
+                              <td style={{ padding: '8px 12px' }}>{Math.round(q.max_duration_us / 1000)} ms</td>
+                              <td style={{ padding: '8px 12px' }}>
+                                {q.is_slow ? (
+                                  <span style={{ padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(248, 81, 73, 0.15)', color: 'var(--danger)', fontSize: '11px', fontWeight: 600 }}>
+                                    SLOW
+                                  </span>
+                                ) : (
+                                  <span style={{ padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(63, 185, 80, 0.15)', color: 'var(--success)', fontSize: '11px', fontWeight: 600 }}>
+                                    FAST
+                                  </span>
+                                )}
+                              </td>
+                              <td style={{ padding: '8px 12px' }}>
+                                <button
+                                  onClick={() => {
+                                    setExplainSqlInput(q.sql_template);
+                                    setDbSubTab('explain');
+                                    setTimeout(() => handleRunExplain(), 50);
+                                  }}
+                                  style={{
+                                    padding: '3px 8px',
+                                    borderRadius: '4px',
+                                    border: '1px solid var(--accent)',
+                                    backgroundColor: 'transparent',
+                                    color: 'var(--accent)',
+                                    fontSize: '11px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  🔍 EXPLAIN
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Sub-Tab 2: Solution Advisor & Recommendations */}
+              {dbSubTab === 'advisor' && (
+                <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {dbFindings.length === 0 ? (
+                    <div style={{
+                      padding: '48px 16px',
+                      borderRadius: '6px',
+                      backgroundColor: 'var(--bg-card)',
+                      border: '1px solid var(--border-color)',
+                      textAlign: 'center',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '12px'
+                    }}>
+                      <div style={{ fontSize: '32px' }}>💡</div>
+                      <div style={{ fontSize: '14px', fontWeight: 600 }}>No Active Database Issues Detected</div>
+                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', maxWidth: '420px', margin: 0 }}>
+                        Click "Run Workload Advisor" above to scan recorded database queries for N+1 loops, slow table scans, and deadlocks.
+                      </p>
+                      <button
+                        onClick={handleRunDBAdvisor}
+                        style={{
+                          padding: '8px 16px',
+                          backgroundColor: 'var(--accent)',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '6px',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        🚀 Run Workload Advisor Now
+                      </button>
+                    </div>
+                  ) : (
+                    dbFindings.map((f) => (
+                      <div
+                        key={f.id}
+                        style={{
+                          padding: '16px',
+                          borderRadius: '6px',
+                          backgroundColor: 'var(--bg-card)',
+                          border: `1px solid ${f.severity === 'critical' ? 'rgba(248, 81, 73, 0.4)' : 'var(--border-color)'}`,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '12px'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{
+                              fontSize: '10px',
+                              fontWeight: 700,
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              backgroundColor: f.severity === 'critical' ? 'var(--danger)' : 'var(--warning, #d29922)',
+                              color: '#fff',
+                              textTransform: 'uppercase'
+                            }}>
+                              {f.severity}
+                            </span>
+                            <span style={{ fontSize: '14px', fontWeight: 600 }}>
+                              {f.type === 'n_plus_one' ? 'N+1 Query Heuristic Detected' : f.type === 'missing_index' ? 'Missing Index / Table Scan Candidate' : f.type}
+                            </span>
+                            <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                              ({Math.round((f.confidence || 0.9) * 100)}% Confidence)
+                            </span>
+                          </div>
+
+                          <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                            Status: <strong style={{ textTransform: 'uppercase', color: f.status === 'open' ? 'var(--accent)' : 'var(--text-secondary)' }}>{f.status}</strong>
+                          </span>
+                        </div>
+
+                        {/* Evidence Pre Block */}
+                        <div>
+                          <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>EVIDENCE</div>
+                          <pre style={{
+                            padding: '8px 12px',
+                            backgroundColor: 'var(--bg-main)',
+                            borderRadius: '4px',
+                            border: '1px solid var(--border-color)',
+                            fontSize: '11px',
+                            fontFamily: 'monospace',
+                            margin: 0,
+                            overflow: 'auto'
+                          }}>
+                            {(() => {
+                              try {
+                                return JSON.stringify(JSON.parse(f.evidence_json), null, 2);
+                              } catch {
+                                return f.evidence_json || '{}';
+                              }
+                            })()}
+                          </pre>
+                        </div>
+
+                        {/* Candidate Recommendations */}
+                        {f.recommendations && f.recommendations.map((rec: any) => (
+                          <div
+                            key={rec.id}
+                            style={{
+                              padding: '12px',
+                              borderRadius: '4px',
+                              backgroundColor: 'rgba(88, 166, 255, 0.05)',
+                              border: '1px solid rgba(88, 166, 255, 0.2)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '10px'
+                            }}
+                          >
+                            <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--accent)' }}>
+                              PROPOSED SOLUTION ({rec.engine?.toUpperCase()})
+                            </div>
+                            <div style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
+                              {rec.rationale}
+                            </div>
+
+                            {rec.proposed_sql && (
+                              <div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>SUGGESTED SQL:</span>
+                                  <button
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(rec.proposed_sql);
+                                      alert('Copied SQL to clipboard!');
+                                    }}
+                                    style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: '11px', cursor: 'pointer' }}
+                                  >
+                                    📋 Copy SQL
+                                  </button>
+                                </div>
+                                <pre style={{
+                                  padding: '8px',
+                                  backgroundColor: 'var(--bg-main)',
+                                  borderRadius: '4px',
+                                  border: '1px solid var(--border-color)',
+                                  fontSize: '11px',
+                                  fontFamily: 'monospace',
+                                  margin: 0
+                                }}>
+                                  {rec.proposed_sql}
+                                </pre>
+                              </div>
+                            )}
+
+                            {rec.proposed_code && (
+                              <div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>PHP / ELOQUENT REFACTOR:</span>
+                                  <button
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(rec.proposed_code);
+                                      alert('Copied PHP refactor code to clipboard!');
+                                    }}
+                                    style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: '11px', cursor: 'pointer' }}
+                                  >
+                                    📋 Copy Code
+                                  </button>
+                                </div>
+                                <pre style={{
+                                  padding: '8px',
+                                  backgroundColor: 'var(--bg-main)',
+                                  borderRadius: '4px',
+                                  border: '1px solid var(--border-color)',
+                                  fontSize: '11px',
+                                  fontFamily: 'monospace',
+                                  margin: 0
+                                }}>
+                                  {rec.proposed_code}
+                                </pre>
+                              </div>
+                            )}
+
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
+                              <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                                Approval Status: <strong style={{ textTransform: 'uppercase' }}>{rec.approval_status}</strong>
+                              </span>
+
+                              <div style={{ display: 'flex', gap: '8px' }}>
+                                <button
+                                  onClick={() => handleUpdateRecStatus(rec.id, 'dismissed')}
+                                  style={{
+                                    padding: '4px 10px',
+                                    borderRadius: '4px',
+                                    border: '1px solid var(--border-color)',
+                                    backgroundColor: 'transparent',
+                                    color: 'var(--text-secondary)',
+                                    fontSize: '11px',
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  Dismiss
+                                </button>
+                                <button
+                                  onClick={() => handleUpdateRecStatus(rec.id, 'approved')}
+                                  style={{
+                                    padding: '4px 10px',
+                                    borderRadius: '4px',
+                                    backgroundColor: 'var(--success)',
+                                    color: '#fff',
+                                    border: 'none',
+                                    fontSize: '11px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  ✔ Approve Recommendation
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* Sub-Tab 3: Safe EXPLAIN Visualizer */}
+              {dbSubTab === 'explain' && (
+                <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '12px', overflow: 'hidden' }}>
+                  {/* Query Input Card */}
+                  <div style={{
+                    padding: '14px',
+                    borderRadius: '6px',
+                    backgroundColor: 'var(--bg-card)',
+                    border: '1px solid var(--border-color)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 600 }}>SQL Execution Plan Inspector</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>DIALECT:</span>
+                        <select
+                          value={explainDriver}
+                          onChange={(e) => setExplainDriver(e.target.value)}
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            border: '1px solid var(--border-color)',
+                            backgroundColor: 'var(--bg-main)',
+                            color: 'var(--text-primary)',
+                            fontSize: '11px'
+                          }}
+                        >
+                          <option value="mysql">MySQL</option>
+                          <option value="postgres">PostgreSQL</option>
+                          <option value="sqlite">SQLite</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <textarea
+                      value={explainSqlInput}
+                      onChange={(e) => setExplainSqlInput(e.target.value)}
+                      rows={3}
+                      style={{
+                        width: '100%',
+                        padding: '8px',
+                        borderRadius: '4px',
+                        border: '1px solid var(--border-color)',
+                        backgroundColor: 'var(--bg-main)',
+                        color: 'var(--text-primary)',
+                        fontFamily: 'monospace',
+                        fontSize: '12px',
+                        resize: 'vertical'
+                      }}
+                    />
+
+                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                      <button
+                        onClick={handleRunExplain}
+                        disabled={explainLoading}
+                        style={{
+                          padding: '6px 14px',
+                          backgroundColor: 'var(--accent)',
+                          color: '#fff',
+                          border: 'none',
+                          borderRadius: '4px',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {explainLoading ? 'Analyzing Plan...' : '🔍 Generate Safe EXPLAIN'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Explain Results Viewer */}
+                  {explainResult && (
+                    <div style={{
+                      flex: 1,
+                      overflowY: 'auto',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '12px'
+                    }}>
+                      {/* Metric Banner Cards */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
+                        <div style={{
+                          padding: '12px',
+                          borderRadius: '6px',
+                          backgroundColor: explainResult.plan_type === 'ALL' ? 'rgba(248, 81, 73, 0.15)' : 'rgba(63, 185, 80, 0.15)',
+                          border: `1px solid ${explainResult.plan_type === 'ALL' ? 'var(--danger)' : 'var(--success)'}`
+                        }}>
+                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>ACCESS TYPE</div>
+                          <div style={{
+                            fontSize: '18px',
+                            fontWeight: 700,
+                            color: explainResult.plan_type === 'ALL' ? 'var(--danger)' : 'var(--success)',
+                            marginTop: '4px'
+                          }}>
+                            {explainResult.plan_type}
+                          </div>
+                        </div>
+
+                        <div style={{ padding: '12px', borderRadius: '6px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>ESTIMATED ROWS</div>
+                          <div style={{ fontSize: '18px', fontWeight: 700, marginTop: '4px' }}>
+                            {explainResult.rows_examined?.toLocaleString()}
+                          </div>
+                        </div>
+
+                        <div style={{ padding: '12px', borderRadius: '6px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>KEY / INDEX USED</div>
+                          <div style={{ fontSize: '14px', fontFamily: 'monospace', fontWeight: 700, marginTop: '6px' }}>
+                            {explainResult.key_used || 'NONE'}
+                          </div>
+                        </div>
+
+                        <div style={{ padding: '12px', borderRadius: '6px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
+                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>COST SCORE</div>
+                          <div style={{ fontSize: '18px', fontWeight: 700, marginTop: '4px' }}>
+                            {explainResult.cost?.toFixed(2)}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Warnings / Optimizations */}
+                      {explainResult.warnings && explainResult.warnings.length > 0 && (
+                        <div style={{
+                          padding: '12px',
+                          borderRadius: '6px',
+                          backgroundColor: 'rgba(210, 153, 34, 0.1)',
+                          border: '1px solid rgba(210, 153, 34, 0.3)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '6px'
+                        }}>
+                          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--warning, #d29922)' }}>
+                            ⚠️ PERFORMANCE WARNINGS DETECTED
+                          </div>
+                          {explainResult.warnings.map((w: string, i: number) => (
+                            <div key={i} style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
+                              • {w}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Raw Plan JSON */}
+                      <div style={{
+                        padding: '12px',
+                        borderRadius: '6px',
+                        backgroundColor: 'var(--bg-card)',
+                        border: '1px solid var(--border-color)'
+                      }}>
+                        <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                          RAW EXPLAIN PLAN JSON
+                        </div>
+                        <pre style={{
+                          padding: '10px',
+                          backgroundColor: 'var(--bg-main)',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          fontSize: '11px',
+                          fontFamily: 'monospace',
+                          margin: 0,
+                          overflow: 'auto',
+                          maxHeight: '160px'
+                        }}>
+                          {JSON.stringify(explainResult.plan_raw || {}, null, 2)}
+                        </pre>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Sub-Tab 4: Connection Manager */}
+              {dbSubTab === 'connections' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '12px', flex: 1, minHeight: 0 }}>
+                  {/* Add Connection Form */}
+                  <form
+                    onSubmit={handleCreateDBConnection}
+                    style={{
+                      padding: '14px',
+                      borderRadius: '6px',
+                      backgroundColor: 'var(--bg-card)',
+                      border: '1px solid var(--border-color)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px'
+                    }}
+                  >
+                    <div style={{ fontSize: '13px', fontWeight: 600 }}>Register Connection</div>
+                    <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>
+                      Read-only database connections for safe query plan introspection and schema audits.
+                    </p>
+
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                        CONNECTION ALIAS
+                      </label>
+                      <input
+                        type="text"
+                        value={newDbConnName}
+                        onChange={(e) => setNewDbConnName(e.target.value)}
+                        placeholder="e.g. mysql_master"
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: 'var(--bg-main)',
+                          color: 'var(--text-primary)',
+                          fontSize: '12px'
+                        }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
+                        DRIVER
+                      </label>
+                      <select
+                        value={newDbConnDriver}
+                        onChange={(e) => setNewDbConnDriver(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '6px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: 'var(--bg-main)',
+                          color: 'var(--text-primary)',
+                          fontSize: '12px'
+                        }}
+                      >
+                        <option value="mysql">MySQL</option>
+                        <option value="postgres">PostgreSQL</option>
+                        <option value="sqlite">SQLite</option>
+                      </select>
+                    </div>
+
+                    <div style={{
+                      padding: '6px 10px',
+                      borderRadius: '4px',
+                      backgroundColor: 'rgba(63, 185, 80, 0.1)',
+                      border: '1px solid rgba(63, 185, 80, 0.2)',
+                      fontSize: '11px',
+                      color: 'var(--success)'
+                    }}>
+                      🔒 Enforced Read-Only Mode (Mutations Blocked)
+                    </div>
+
+                    <button
+                      type="submit"
+                      style={{
+                        padding: '8px',
+                        backgroundColor: 'var(--accent)',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      ➕ Save Connection
+                    </button>
+                  </form>
+
+                  {/* Connections List */}
+                  <div style={{
+                    backgroundColor: 'var(--bg-card)',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-color)',
+                    overflow: 'hidden',
+                    display: 'flex',
+                    flexDirection: 'column'
+                  }}>
+                    <div style={{
+                      padding: '10px 14px',
+                      borderBottom: '1px solid var(--border-color)',
+                      fontSize: '12px',
+                      fontWeight: 600
+                    }}>
+                      CONFIGURED CONNECTIONS ({dbConnections.length})
+                    </div>
+
+                    <div style={{ flex: 1, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      {dbConnections.length === 0 ? (
+                        <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '12px' }}>
+                          No database connections configured yet.
+                        </div>
+                      ) : (
+                        dbConnections.map((conn) => (
+                          <div
+                            key={conn.id}
+                            style={{
+                              padding: '10px 14px',
+                              borderRadius: '6px',
+                              backgroundColor: 'var(--bg-main)',
+                              border: '1px solid var(--border-color)',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center'
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <span style={{
+                                fontSize: '10px',
+                                fontWeight: 700,
+                                padding: '2px 6px',
+                                borderRadius: '3px',
+                                backgroundColor: 'var(--accent)',
+                                color: '#fff',
+                                textTransform: 'uppercase'
+                              }}>
+                                {conn.driver}
+                              </span>
+                              <span style={{ fontSize: '13px', fontWeight: 600 }}>{conn.name}</span>
+                              <span style={{ fontSize: '11px', color: 'var(--success)' }}>✔ Read-Only</span>
+                            </div>
+
+                            <button
+                              onClick={() => handleDeleteDBConnection(conn.id)}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                color: 'var(--danger)',
+                                fontSize: '12px',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

@@ -254,6 +254,42 @@ func (s *Store) migrate() error {
 		occurred_at TEXT NOT NULL
 	);
 
+	CREATE TABLE IF NOT EXISTS db_connections (
+		id TEXT PRIMARY KEY,
+		project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+		name TEXT NOT NULL,
+		driver TEXT NOT NULL,
+		config_json TEXT,
+		secret_ref TEXT,
+		readonly INTEGER DEFAULT 1,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	);
+
+	CREATE TABLE IF NOT EXISTS db_findings (
+		id TEXT PRIMARY KEY,
+		project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+		connection_id TEXT REFERENCES db_connections(id) ON DELETE SET NULL,
+		type TEXT NOT NULL,
+		severity TEXT NOT NULL,
+		confidence REAL,
+		evidence_json TEXT,
+		status TEXT DEFAULT 'open',
+		created_at TEXT NOT NULL
+	);
+
+	CREATE TABLE IF NOT EXISTS db_recommendations (
+		id TEXT PRIMARY KEY,
+		finding_id TEXT NOT NULL REFERENCES db_findings(id) ON DELETE CASCADE,
+		engine TEXT,
+		proposed_sql TEXT,
+		proposed_code TEXT,
+		rationale TEXT,
+		risks_json TEXT,
+		verification_json TEXT,
+		approval_status TEXT DEFAULT 'pending'
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_traces_proj ON traces(project_id, started_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_spans_trace ON spans(trace_id);
 	CREATE INDEX IF NOT EXISTS idx_sql_trace ON sql_queries(trace_id);
@@ -263,6 +299,9 @@ func (s *Store) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_js_sessions_proj ON js_debug_sessions(project_id, started_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_js_events_session ON js_console_events(session_id, occurred_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_js_events_trace ON js_console_events(trace_id);
+	CREATE INDEX IF NOT EXISTS idx_db_conns_proj ON db_connections(project_id);
+	CREATE INDEX IF NOT EXISTS idx_db_findings_proj ON db_findings(project_id, created_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_db_recs_finding ON db_recommendations(finding_id);
 	`
 	_, err := s.db.Exec(schema)
 	return err

@@ -158,6 +158,14 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/jsdebug/sessions/", s.handleJSDebugSessionDetail)
 	s.mux.HandleFunc("/v1/jsdebug/events", s.handleJSConsoleEvents)
 
+	// Database Debug Studio & Solution Advisor (Module 24)
+	s.mux.HandleFunc("/v1/db/connections", s.handleDBConnections)
+	s.mux.HandleFunc("/v1/db/connections/", s.handleDBConnectionDetail)
+	s.mux.HandleFunc("/v1/db/analyze", s.handleDBAnalyze)
+	s.mux.HandleFunc("/v1/db/findings", s.handleDBFindings)
+	s.mux.HandleFunc("/v1/db/recommendations/", s.handleDBRecommendationDetail)
+	s.mux.HandleFunc("/v1/db/explain", s.handleDBExplain)
+
 	// Breakpoint Management (Module 10)
 	s.mux.HandleFunc("/v1/debug/breakpoints", s.handleBreakpoints)
 	s.mux.HandleFunc("/v1/debug/breakpoints/", s.handleBreakpointDetail)
@@ -1268,4 +1276,150 @@ func (s *Server) handleJSConsoleEvents(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) handleDBConnections(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		projectID := r.URL.Query().Get("project_id")
+		conns, err := s.store.ListDBConnections(projectID)
+		if err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, conns, nil)
+
+	case http.MethodPost:
+		var conn store.DBConnection
+		if err := json.NewDecoder(r.Body).Decode(&conn); err != nil {
+			s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+			return
+		}
+		if conn.Name == "" || conn.Driver == "" {
+			s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "VALIDATION_FAILED", Message: "name and driver are required"})
+			return
+		}
+		id, err := s.store.CreateDBConnection(conn)
+		if err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		conn.ID = id
+		s.jsonResponse(w, http.StatusCreated, conn, nil)
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleDBConnectionDetail(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 4 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	id := parts[3]
+
+	if r.Method == http.MethodDelete {
+		if err := s.store.DeleteDBConnection(id); err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, map[string]bool{"deleted": true}, nil)
+		return
+	}
+
+	w.WriteHeader(http.StatusMethodNotAllowed)
+}
+
+func (s *Server) handleDBAnalyze(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		ProjectID string `json:"project_id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	findings, err := s.store.AnalyzeDatabaseWorkload(req.ProjectID)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "ANALYSIS_FAILED", Message: err.Error()})
+		return
+	}
+
+	s.hub.Broadcast("db_analysis_completed", req.ProjectID, map[string]interface{}{"findings_count": len(findings)})
+	s.jsonResponse(w, http.StatusOK, findings, nil)
+}
+
+func (s *Server) handleDBFindings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	projectID := r.URL.Query().Get("project_id")
+	findings, err := s.store.ListDBFindings(projectID)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, findings, nil)
+}
+
+func (s *Server) handleDBRecommendationDetail(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 4 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	recID := parts[3]
+	action := ""
+	if len(parts) >= 5 {
+		action = parts[4]
+	}
+
+	if r.Method == http.MethodPost && (action == "status" || action == "approve" || action == "dismiss") {
+		var req struct {
+			Status string `json:"status"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if action == "approve" {
+			req.Status = "approved"
+		} else if action == "dismiss" {
+			req.Status = "dismissed"
+		} else if req.Status == "" {
+			req.Status = "approved"
+		}
+
+		if err := s.store.UpdateRecommendationStatus(recID, req.Status); err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, map[string]string{"status": req.Status}, nil)
+		return
+	}
+
+	w.WriteHeader(http.StatusMethodNotAllowed)
+}
+
+func (s *Server) handleDBExplain(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		SQL    string `json:"sql"`
+		Driver string `json:"driver"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	analysis := store.ExplainQueryPlan(req.SQL, req.Driver)
+	s.jsonResponse(w, http.StatusOK, analysis, nil)
 }

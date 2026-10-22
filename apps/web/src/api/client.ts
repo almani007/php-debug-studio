@@ -97,4 +97,18 @@ export const api = {
     request<any[]>(`/jsdebug/events?session_id=${sessionId || ''}&trace_id=${traceId || ''}`),
   emitJSConsoleEvent: (data: { session_id: string; trace_id?: string; severity: string; message_redacted: string; source_url?: string; line?: number; column?: number; stack_json?: string }) =>
     request<any>('/jsdebug/events', { method: 'POST', body: JSON.stringify(data) }),
+  getDBConnections: (projectId?: string) =>
+    request<any[]>(`/db/connections${projectId ? `?project_id=${projectId}` : ''}`),
+  createDBConnection: (data: { project_id: string; name: string; driver: string; config_json?: string; readonly?: boolean }) =>
+    request<any>('/db/connections', { method: 'POST', body: JSON.stringify(data) }),
+  deleteDBConnection: (id: string) =>
+    request<any>(`/db/connections/${id}`, { method: 'DELETE' }),
+  analyzeDB: (projectId: string) =>
+    request<any[]>('/db/analyze', { method: 'POST', body: JSON.stringify({ project_id: projectId }) }),
+  getDBFindings: (projectId: string) =>
+    request<any[]>(`/db/findings?project_id=${encodeURIComponent(projectId)}`),
+  updateRecommendationStatus: (recId: string, status: 'approved' | 'dismissed') =>
+    request<any>(`/db/recommendations/${recId}/status`, { method: 'POST', body: JSON.stringify({ status }) }),
+  explainSQL: (sql: string, driver?: string) =>
+    request<any>('/db/explain', { method: 'POST', body: JSON.stringify({ sql, driver: driver || 'mysql' }) }),
 };
