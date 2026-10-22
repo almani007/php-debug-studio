@@ -17,6 +17,7 @@ import (
 	"github.com/zoventra/php-debug-studio/daemon/pkg/mock"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/runtimes"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/store"
+	"github.com/zoventra/php-debug-studio/daemon/pkg/webhook"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/ws"
 )
 
@@ -24,6 +25,7 @@ type Server struct {
 	store       *store.Store
 	hub         *ws.Hub
 	engine      *executor.Engine
+	graphQL     *executor.GraphQLEngine
 	listener    *dbgp.Listener
 	mockServer  *mock.MockServer
 	phpDetector *runtimes.PhpDetector
@@ -55,6 +57,7 @@ func NewServer(s *store.Store, h *ws.Hub, e *executor.Engine, l *dbgp.Listener, 
 		store:       s,
 		hub:         h,
 		engine:      e,
+		graphQL:     executor.NewGraphQLEngine(),
 		listener:    l,
 		mockServer:  m,
 		phpDetector: runtimes.NewPhpDetector(),
@@ -116,6 +119,52 @@ func (s *Server) registerRoutes() {
 
 	// Settings & Data Retention Purge (Module 21 & NFR-06)
 	s.mux.HandleFunc("/v1/settings/purge", s.handlePurge)
+
+	// GraphQL Engine (Module 05)
+	s.mux.HandleFunc("/v1/graphql/execute", s.handleGraphQLExecute)
+
+	// Webhook Simulator (Module 22 & WH-007)
+	s.mux.HandleFunc("/v1/webhooks/simulate", s.handleWebhookSimulate)
+}
+
+func (s *Server) handleGraphQLExecute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req executor.GraphQLRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	res, err := s.graphQL.Execute(req)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "GRAPHQL_ERROR", Message: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, res, nil)
+}
+
+func (s *Server) handleWebhookSimulate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Provider string `json:"provider"`
+		Secret   string `json:"secret"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.Secret == "" {
+		req.Secret = "whsec_sample_secret_key"
+	}
+
+	simulated := webhook.GenerateSimulatedWebhook(req.Provider, req.Secret)
+	s.jsonResponse(w, http.StatusOK, simulated, nil)
 }
 
 func (s *Server) handlePurge(w http.ResponseWriter, r *http.Request) {
