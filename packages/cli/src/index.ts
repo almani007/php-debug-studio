@@ -2,11 +2,57 @@ import fs from 'fs';
 import path from 'path';
 import { runCollection, Collection } from './runner';
 import { generateJUnitReport, TestResult } from './junit';
+import { importOpenApi, importPostman } from './openapi';
 
 export async function cli(args: string[]): Promise<number> {
+  const command = args[0];
+
+  if (command === 'import') {
+    const inputPath = args[1];
+    if (!inputPath) {
+      console.error('Usage: debug-studio import <spec.json> [--type openapi|postman] --out <collection.json>');
+      return 1;
+    }
+
+    const resolvedInput = path.resolve(process.cwd(), inputPath);
+    if (!fs.existsSync(resolvedInput)) {
+      console.error(`Error: File not found: ${resolvedInput}`);
+      return 1;
+    }
+
+    const content = JSON.parse(fs.readFileSync(resolvedInput, 'utf8'));
+    let type = 'openapi';
+    const typeIndex = args.indexOf('--type');
+    if (typeIndex !== -1 && args[typeIndex + 1]) {
+      type = args[typeIndex + 1].toLowerCase();
+    } else if (content.info?.schema?.includes('postman') || content.item) {
+      type = 'postman';
+    }
+
+    let collection: Collection;
+    if (type === 'postman') {
+      collection = importPostman(content);
+    } else {
+      collection = importOpenApi(content);
+    }
+
+    let outPath = 'collection.json';
+    const outIndex = args.indexOf('--out');
+    if (outIndex !== -1 && args[outIndex + 1]) {
+      outPath = args[outIndex + 1];
+    }
+
+    const resolvedOut = path.resolve(process.cwd(), outPath);
+    fs.writeFileSync(resolvedOut, JSON.stringify(collection, null, 2), 'utf8');
+    console.log(`Successfully imported ${collection.requests.length} requests into ${resolvedOut}`);
+    return 0;
+  }
+
   const collectionIndex = args.indexOf('run');
   if (collectionIndex === -1 || !args[collectionIndex + 1]) {
-    console.error('Usage: debug-studio run <collection.json> [--env <env.json>] [--report-junit <report.xml>]');
+    console.error('Usage:');
+    console.error('  debug-studio run <collection.json> [--env <env.json>] [--report-junit <report.xml>]');
+    console.error('  debug-studio import <spec.json> [--type openapi|postman] --out <collection.json>');
     return 1;
   }
 
