@@ -7,33 +7,61 @@ on:
     branches: [ main ]
 
 jobs:
-  test:
-    name: Build & Test Matrix
+  php-tests:
+    name: PHP Matrix Tests (v${{ matrix.php }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.3', '8.4']
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup PHP
+      - name: Setup PHP ${{ matrix.php }}
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.3'
-          extensions: mbstring, pdo_sqlite, xdebug
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, pdo_sqlite
           coverage: none
+
+      - name: Install PHP Dependencies
+        run: |
+          cd packages/php-core
+          composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Run PHP Unit Tests
+        run: |
+          cd packages/php-core
+          ./vendor/bin/phpunit --testdox
+
+  go-tests:
+    name: Go Local Daemon Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Verify Documentation & Schemas
+      - name: Verify Go Daemon Build
         run: |
-          test -f docs/srs/SRS.md
-          test -f docs/architecture/SCHEMA.sql
-          test -f LICENSE
-          test -f README.md
+          cd apps/daemon
+          go vet ./...
+          go test -v ./...
+          go build -o bin/daemon main.go
+
+  smoke-tests:
+    name: E2E Smoke & Verification Gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Execute Smoke Test
+        run: |
+          chmod +x tests/e2e/smoke_test.sh
+          ./tests/e2e/smoke_test.sh
