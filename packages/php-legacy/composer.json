@@ -1,0 +1,22 @@
+{
+    "name": "zoventra/php-debug-studio-legacy",
+    "description": "Legacy PHP 7.4 - 8.1 compatibility adapter for PHP Debug Studio by zoventra",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "zoventra",
+            "email": "dev@zoventra.com"
+        }
+    ],
+    "require": {
+        "php": ">=7.4 <8.2"
+    },
+    "autoload": {
+        "psr-4": {
+            "Zoventra\\DebugStudio\\Legacy\\": "src/"
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
