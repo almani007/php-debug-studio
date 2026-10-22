@@ -1,0 +1,24 @@
+{
+  "name": "@zoventra/php-debug-studio-cli",
+  "version": "1.0.0",
+  "description": "Headless collection runner and CI tool for PHP Debug Studio",
+  "bin": {
+    "debug-studio": "./bin/debug-studio.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "start": "node bin/debug-studio.js"
+  },
+  "keywords": ["php", "debug", "cli", "runner", "ci"],
+  "author": "zoventra",
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
+  }
+}

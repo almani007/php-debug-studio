@@ -1,0 +1,38 @@
+{
+  "name": "Laravel API Test Suite",
+  "requests": [
+    {
+      "name": "Health Check",
+      "method": "GET",
+      "url": "{{baseUrl}}/up",
+      "assertions": {
+        "statusCode": 200,
+        "maxDurationMs": 500
+      }
+    },
+    {
+      "name": "Get Users Endpoint",
+      "method": "GET",
+      "url": "{{baseUrl}}/api/users",
+      "headers": {
+        "Authorization": "Bearer {{apiToken}}"
+      },
+      "assertions": {
+        "statusCode": 200,
+        "maxDurationMs": 1000
+      }
+    },
+    {
+      "name": "Create User",
+      "method": "POST",
+      "url": "{{baseUrl}}/api/users",
+      "headers": {
+        "Authorization": "Bearer {{apiToken}}"
+      },
+      "body": "{\n  \"name\": \"Zulqarnain\",\n  \"email\": \"user@example.com\"\n}",
+      "assertions": {
+        "statusCode": 201
+      }
+    }
+  ]
+}
