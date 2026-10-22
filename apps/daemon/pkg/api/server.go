@@ -14,16 +14,18 @@ import (
 	"github.com/google/uuid"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/dbgp"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/executor"
+	"github.com/zoventra/php-debug-studio/daemon/pkg/mock"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/store"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/ws"
 )
 
 type Server struct {
-	store    *store.Store
-	hub      *ws.Hub
-	engine   *executor.Engine
-	listener *dbgp.Listener
-	mux      *http.ServeMux
+	store      *store.Store
+	hub        *ws.Hub
+	engine     *executor.Engine
+	listener   *dbgp.Listener
+	mockServer *mock.MockServer
+	mux        *http.ServeMux
 }
 
 type ResponseEnvelope struct {
@@ -43,13 +45,17 @@ type ErrorInfo struct {
 	Details interface{} `json:"details,omitempty"`
 }
 
-func NewServer(s *store.Store, h *ws.Hub, e *executor.Engine, l *dbgp.Listener) *Server {
+func NewServer(s *store.Store, h *ws.Hub, e *executor.Engine, l *dbgp.Listener, m *mock.MockServer) *Server {
+	if m == nil {
+		m = mock.NewMockServer()
+	}
 	srv := &Server{
-		store:    s,
-		hub:      h,
-		engine:   e,
-		listener: l,
-		mux:      http.NewServeMux(),
+		store:      s,
+		hub:        h,
+		engine:     e,
+		listener:   l,
+		mockServer: m,
+		mux:        http.NewServeMux(),
 	}
 	srv.registerRoutes()
 	return srv
@@ -97,6 +103,35 @@ func (s *Server) registerRoutes() {
 
 	// Webhook endpoint
 	s.mux.HandleFunc("/wh/", s.handleIncomingWebhook)
+
+	// Local Mock Server (Module 09)
+	s.mux.HandleFunc("/v1/mocks", s.handleMocks)
+	s.mux.Handle("/mock/", http.StripPrefix("/mock", s.mockServer))
+}
+
+func (s *Server) handleMocks(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		projectID := r.URL.Query().Get("project_id")
+		rules := s.mockServer.GetRules(projectID)
+		s.jsonResponse(w, http.StatusOK, rules, nil)
+
+	case http.MethodPost:
+		var rule mock.MockRule
+		if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
+			s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+			return
+		}
+		if rule.ID == "" {
+			rule.ID = uuid.New().String()
+		}
+		rule.Enabled = true
+		s.mockServer.AddRule(&rule)
+		s.jsonResponse(w, http.StatusCreated, rule, nil)
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

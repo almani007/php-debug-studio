@@ -21,7 +21,7 @@ func TestDaemonHealthEndpoint(t *testing.T) {
 
 	hub := ws.NewHub()
 	engine := executor.NewEngine()
-	server := api.NewServer(st, hub, engine, nil)
+	server := api.NewServer(st, hub, engine, nil, nil)
 
 	req, _ := http.NewRequest(http.MethodGet, "/v1/health", nil)
 	rr := httptest.NewRecorder()

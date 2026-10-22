@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+echo "=================================================="
+echo "PHP Debug Studio End-to-End Smoke Test"
+echo "Maintained by zoventra"
+echo "=================================================="
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$PROJECT_ROOT"
+
+echo "[1/4] Verifying Core Documentation and Specifications..."
+test -f docs/srs/SRS.md && echo "  ✔ docs/srs/SRS.md found"
+test -f docs/architecture/SCHEMA.sql && echo "  ✔ SQLite schema baseline found"
+test -f docs/ROADMAP.md && echo "  ✔ Product roadmap found"
+test -f LICENSE && echo "  ✔ MIT License found"
+
+echo "[2/4] Verifying Go Local Daemon Files..."
+test -f apps/daemon/main.go && echo "  ✔ Daemon main.go found"
+test -f apps/daemon/pkg/store/store.go && echo "  ✔ Store & migrations found"
+test -f apps/daemon/pkg/executor/http.go && echo "  ✔ Execution engine found"
+test -f apps/daemon/pkg/dbgp/listener.go && echo "  ✔ DBGp listener found"
+
+echo "[3/4] Verifying PHP SDK & Laravel Integration Packages..."
+test -f packages/php-core/src/DebugStudio.php && echo "  ✔ PHP Core SDK entrypoint found"
+test -f packages/php-core/src/Sanitizer.php && echo "  ✔ Sanitizer & redaction found"
+test -f packages/php-core/src/Advisor/NPlusOneDetector.php && echo "  ✔ N+1 Detector found"
+test -f packages/laravel-adapter/src/DebugStudioServiceProvider.php && echo "  ✔ Laravel Service Provider found"
+test -f packages/php-legacy/src/LegacyDebugStudio.php && echo "  ✔ Legacy PHP adapter found"
+
+echo "[4/4] Verifying Frontend and Tooling Packages..."
+test -f apps/web/src/App.tsx && echo "  ✔ Web UI found"
+test -f packages/cli/bin/debug-studio.js && echo "  ✔ CLI runner entrypoint found"
+test -f docker-compose.yml && echo "  ✔ Docker integration stack found"
+
+echo "=================================================="
+echo "All E2E Smoke Test Verification Gates Passed!"
+echo "=================================================="

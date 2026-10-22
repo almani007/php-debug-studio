@@ -11,6 +11,7 @@ import (
 	"github.com/zoventra/php-debug-studio/daemon/pkg/api"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/dbgp"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/executor"
+	"github.com/zoventra/php-debug-studio/daemon/pkg/mock"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/store"
 	"github.com/zoventra/php-debug-studio/daemon/pkg/ws"
 )
@@ -50,7 +51,8 @@ func main() {
 		defer dbgpListener.Close()
 	}
 
-	server := api.NewServer(st, hub, execEngine, dbgpListener)
+	mockEngine := mock.NewMockServer()
+	server := api.NewServer(st, hub, execEngine, dbgpListener, mockEngine)
 
 	port := os.Getenv("DEBUG_STUDIO_PORT")
 	if port == "" {
