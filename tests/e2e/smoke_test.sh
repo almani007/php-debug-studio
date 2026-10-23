@@ -40,11 +40,15 @@ test -f packages/php-core/src/Advisor/NPlusOneDetector.php && echo "  ✔ N+1 De
 test -f packages/laravel-adapter/src/DebugStudioServiceProvider.php && echo "  ✔ Laravel Service Provider found"
 test -f packages/php-legacy/src/LegacyDebugStudio.php && echo "  ✔ Legacy PHP adapter found"
 
-echo "[4/4] Verifying Frontend and Tooling Packages..."
+echo "[4/4] Verifying Frontend, Examples and Testing Suites..."
 test -f apps/web/src/App.tsx && echo "  ✔ Web UI found"
 test -f packages/cli/bin/debug-studio.js && echo "  ✔ CLI runner entrypoint found"
 test -f .github/workflows/release.yml && echo "  ✔ Multi-platform release workflow found"
 test -f docker-compose.yml && echo "  ✔ Docker integration stack found"
+test -f tests/e2e/daemon_api_test.go && echo "  ✔ Go Daemon E2E integration test suite found"
+test -f tests/compatibility/php_compat_test.php && echo "  ✔ PHP compatibility test suite found"
+test -f examples/browser/index.html && echo "  ✔ Browser full-stack tracing example found"
+test -f examples/webhooks/webhook_receiver.php && echo "  ✔ Webhook receiver sample found"
 
 echo "=================================================="
 echo "All E2E Smoke Test Verification Gates Passed!"
