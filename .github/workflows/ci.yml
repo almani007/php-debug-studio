@@ -54,6 +54,34 @@ jobs:
           go test -v ./...
           go build -o bin/daemon main.go
 
+  ts-build:
+    name: TypeScript & Frontend Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Root Dependencies
+        run: |
+          npm ci || npm install
+
+      - name: Build Web Application
+        run: |
+          cd apps/web
+          npm ci || npm install
+          npm run build
+
+      - name: Build CLI Runner
+        run: |
+          cd packages/cli
+          npm ci || npm install
+          npm run build
+
   smoke-tests:
     name: E2E Smoke & Verification Gates
     runs-on: ubuntu-latest
