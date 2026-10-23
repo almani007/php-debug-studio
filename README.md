@@ -188,7 +188,39 @@ DebugStudio::init([
 ]);
 ```
 
-### 3. Start the Local Daemon & Desktop App
+### 3. CLI Automation & Headless Execution
+
+PHP Debug Studio includes a standalone CLI (`@zoventra/php-debug-studio-cli`) for headless workflows and CI/CD automation:
+
+```bash
+# Run API test collection with JUnit export
+debug-studio run collection.json --env local.json --report-junit report.xml
+
+# Run Pest/PHPUnit tests in isolated processes
+debug-studio test --pest --filter UserTest
+
+# Execute Artisan commands with safety guardrails
+debug-studio artisan migrate:status
+
+# Inspect and retry failed background queue jobs
+debug-studio queue
+debug-studio queue retry 550e8400-e29b-41d4-a716-446655440000
+
+# Run Security Diagnostics for exposed keys and weak configs
+debug-studio scan .
+
+# Query local AI Solution Advisor (100% offline via Ollama)
+debug-studio ai explain "SQLSTATE[HY000] [2002] Connection refused"
+debug-studio ai optimize "SELECT * FROM orders WHERE user_id = 42"
+
+# Test and simulate webhook payloads
+debug-studio webhook wh_stripe_01 invoice.payment_succeeded '{"amount": 5000}'
+
+# Fetch database slow query heuristics and candidate index advice
+debug-studio db scan default
+```
+
+### 4. Start the Local Daemon & Desktop App
 
 ```bash
 # Build and run the local Go daemon
@@ -215,13 +247,13 @@ Alternatively, open `http://127.0.0.1:8765` in any modern web browser to access 
 ## 🗺️ Engineering Milestones
 
 - [x] **M0: Foundation** — Architecture baseline, SQLite schemas, threat model, CI configuration, and repository layout.
-- [ ] **M1: API Core** — REST engine, collection manager, environment variables, and request history.
-- [ ] **M2: SDK & Laravel** — PHP error handlers, DB::listen spans, trace correlation, and batch ingestion.
-- [ ] **M3: Xdebug Bridge** — DBGp protocol engine, breakpoint management, stack inspection, and path mapping.
-- [ ] **M4: Advanced Protocols** — OAuth2 PKCE, WebSocket/SSE streams, OpenAPI contracts, and mocks.
-- [ ] **M5: Diagnostics** — SQL advisor, N+1 detection, queue tracking, and log explorer.
-- [ ] **M6: Full-Stack & Webhooks** — Webhook Studio (M22), JS Studio (M23), and Database Advisor (M24).
-- [ ] **M7: v1.0 Stable Release** — Cross-platform Tauri installers, documentation, and certified test suites.
+- [x] **M1: API Core** — REST engine, collection manager, environment variables, and request history.
+- [x] **M2: SDK & Laravel** — PHP error handlers, DB::listen spans, trace correlation, and batch ingestion.
+- [x] **M3: Xdebug Bridge** — DBGp protocol engine, breakpoint management, stack inspection, and path mapping.
+- [x] **M4: Advanced Protocols** — OAuth2 PKCE, WebSocket/SSE streams, OpenAPI contracts, and mocks.
+- [x] **M5: Diagnostics** — SQL advisor, N+1 detection, queue tracking, and log explorer.
+- [x] **M6: Full-Stack & Webhooks** — Webhook Studio (M22), JS Studio (M23), and Database Advisor (M24).
+- [x] **M7: v1.0 Stable Release** — Cross-platform Tauri installers, documentation, and certified test suites.
 
 ---
 

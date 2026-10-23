@@ -6,6 +6,10 @@ import { importOpenApi, importPostman } from './openapi';
 import { runTests } from './test-studio';
 import { executeArtisan } from './artisan';
 import { scanProjectSecurity } from './security-scan';
+import { listFailedJobs, retryFailedJob } from './queue-diagnostics';
+import { explainErrorCli, optimizeQueryCli } from './advisor';
+import { simulateWebhookCli } from './webhook';
+import { scanDatabaseCli } from './database';
 
 export async function cli(args: string[]): Promise<number> {
   const command = args[0];
@@ -53,6 +57,91 @@ export async function cli(args: string[]): Promise<number> {
     if (res.stdout) console.log(res.stdout);
     if (res.stderr) console.error(res.stderr);
     return res.exitCode;
+  }
+
+  if (command === 'queue') {
+    const subCmd = args[1];
+    if (subCmd === 'retry') {
+      const jobId = args[2];
+      if (!jobId) {
+        console.error('Usage: debug-studio queue retry <job-id>');
+        return 1;
+      }
+      console.log(`Retrying queued job ID: ${jobId}...`);
+      const output = await retryFailedJob(jobId, '.');
+      console.log(output);
+      return 0;
+    }
+    console.log('Fetching failed queue jobs via artisan...');
+    const output = await listFailedJobs('.');
+    console.log(output);
+    return 0;
+  }
+
+  if (command === 'ai') {
+    const subCmd = args[1];
+    if (subCmd === 'explain') {
+      const errorText = args.slice(2).join(' ') || 'General PHP Exception';
+      console.log(`Asking local Ollama AI to explain error: "${errorText}"...`);
+      const res = await explainErrorCli(errorText);
+      console.log('\n--- Local AI Advisor Analysis ---');
+      console.log(res);
+      return 0;
+    }
+    if (subCmd === 'optimize') {
+      const sqlQuery = args.slice(2).join(' ');
+      if (!sqlQuery) {
+        console.error('Usage: debug-studio ai optimize <SELECT ...>');
+        return 1;
+      }
+      console.log(`Analyzing query performance via local AI...`);
+      const res = await optimizeQueryCli(sqlQuery);
+      console.log('\n--- Local AI Optimization Recommendations ---');
+      console.log(res);
+      return 0;
+    }
+    console.error('Usage: debug-studio ai <explain|optimize> [arguments]');
+    return 1;
+  }
+
+  if (command === 'webhook') {
+    const receiverId = args[1];
+    const event = args[2] || 'test.ping';
+    let payload = { timestamp: Date.now(), test: true };
+    if (args[3]) {
+      try {
+        payload = JSON.parse(args[3]);
+      } catch (e: any) {
+        console.error('Invalid JSON payload provided.');
+        return 1;
+      }
+    }
+    if (!receiverId) {
+      console.error('Usage: debug-studio webhook <receiver-id> [event-type] [payload-json]');
+      return 1;
+    }
+    console.log(`Dispatching webhook event "${event}" to receiver ${receiverId}...`);
+    const res = await simulateWebhookCli(receiverId, event, payload);
+    console.log(`Response HTTP ${res.status}: ${res.body}`);
+    return res.status >= 200 && res.status < 300 ? 0 : 1;
+  }
+
+  if (command === 'db') {
+    const subCmd = args[1];
+    if (subCmd === 'scan') {
+      const proj = args[2] || 'default';
+      console.log(`Fetching database performance findings for project: ${proj}...`);
+      try {
+        const findings = await scanDatabaseCli(proj);
+        console.log(`Retrieved findings:`, JSON.stringify(findings, null, 2));
+        return 0;
+      } catch (e: any) {
+        console.error(e.message);
+        return 1;
+      }
+    }
+    console.error('Usage: debug-studio db scan [project-id]');
+    return 1;
   }
 
   if (command === 'import') {
@@ -104,7 +193,11 @@ export async function cli(args: string[]): Promise<number> {
     console.error('  debug-studio import <spec.json> [--type openapi|postman] --out <collection.json>');
     console.error('  debug-studio test [--pest] [--filter <pattern>]');
     console.error('  debug-studio artisan <command> [--force]');
+    console.error('  debug-studio queue [retry <id>]');
     console.error('  debug-studio scan [path]');
+    console.error('  debug-studio ai <explain|optimize> <text>');
+    console.error('  debug-studio webhook <receiver-id> [event] [payload-json]');
+    console.error('  debug-studio db scan [project-id]');
     return 1;
   }
 
