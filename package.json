@@ -1,5 +1,6 @@
 {
   "name": "php-debug-studio",
+  "version": "1.0.0",
   "private": true,
   "description": "PHP Debug Studio by zoventra - Monorepo root",
   "workspaces": [
