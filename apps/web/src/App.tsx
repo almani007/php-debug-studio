@@ -119,6 +119,11 @@ export function App() {
   const [aiResponse, setAiResponse] = useState<string>('');
   const [aiLoading, setAiLoading] = useState<boolean>(false);
 
+  // Global Command Palette & Quick Switcher (Cmd+K)
+  const [showCommandPalette, setShowCommandPalette] = useState<boolean>(false);
+  const [paletteQuery, setPaletteQuery] = useState<string>('');
+  const [paletteIndex, setPaletteIndex] = useState<number>(0);
+
   // AI Solution Advisor Studio state (Module 26)
   const [aiMode, setAiMode] = useState<'error' | 'sql' | 'chat'>('error');
   const [aiStatus, setAiStatus] = useState<{ available: boolean; endpoint: string; models: string[] } | null>(null);
@@ -958,14 +963,74 @@ export function App() {
     }
   };
 
+  // Command Palette Catalog (Cmd+K)
+  const paletteCommands = [
+    { id: 'tab-api', category: 'Navigation', title: 'API Studio (REST & GraphQL)', shortcut: 'Cmd+1', action: () => { setActiveTab('api'); setShowCommandPalette(false); } },
+    { id: 'tab-traces', category: 'Navigation', title: 'Traces & Waterfall Timeline', shortcut: 'Cmd+2', action: () => { setActiveTab('traces'); setShowCommandPalette(false); } },
+    { id: 'tab-sql', category: 'Navigation', title: 'Database Studio & Solution Advisor', shortcut: 'Cmd+3', action: () => { setActiveTab('sql'); setShowCommandPalette(false); } },
+    { id: 'tab-logs', category: 'Navigation', title: 'Logs & Trace Correlation', shortcut: 'Cmd+4', action: () => { setActiveTab('logs'); setShowCommandPalette(false); } },
+    { id: 'tab-tests', category: 'Navigation', title: 'Test Studio (PHPUnit & Pest)', shortcut: 'Cmd+5', action: () => { setActiveTab('tests'); setShowCommandPalette(false); } },
+    { id: 'tab-artisan', category: 'Navigation', title: 'Artisan Console & Safety Guardrails', shortcut: 'Cmd+6', action: () => { setActiveTab('artisan'); setShowCommandPalette(false); } },
+    { id: 'tab-queues', category: 'Navigation', title: 'Queue Studio (Worker Jobs & Retries)', shortcut: 'Cmd+7', action: () => { setActiveTab('queues'); setShowCommandPalette(false); } },
+    { id: 'tab-routes', category: 'Navigation', title: 'Laravel Route Introspector', shortcut: '', action: () => { setActiveTab('routes'); setShowCommandPalette(false); } },
+    { id: 'tab-security', category: 'Navigation', title: 'Security Diagnostics Audit', shortcut: '', action: () => { setActiveTab('security'); setShowCommandPalette(false); } },
+    { id: 'tab-xdebug', category: 'Navigation', title: 'DBGp PHP Step Debugger', shortcut: 'Cmd+8', action: () => { setActiveTab('xdebug'); setShowCommandPalette(false); } },
+    { id: 'tab-webhooks', category: 'Navigation', title: 'Webhook Studio (Receivers & Replay)', shortcut: 'Cmd+9', action: () => { setActiveTab('webhooks'); setShowCommandPalette(false); } },
+    { id: 'tab-jsdebug', category: 'Navigation', title: 'JavaScript & Frontend Debug Studio', shortcut: '', action: () => { setActiveTab('jsdebug'); setShowCommandPalette(false); } },
+    { id: 'tab-streams', category: 'Navigation', title: 'Live Event Streams (WebSocket / SSE)', shortcut: '', action: () => { setActiveTab('streams'); setShowCommandPalette(false); } },
+    { id: 'tab-projects', category: 'Navigation', title: 'Projects, Workspaces & PHP Runtimes', shortcut: '', action: () => { setActiveTab('projects'); setShowCommandPalette(false); } },
+    { id: 'tab-ai', category: 'Navigation', title: 'Local AI Solution Advisor (Ollama)', shortcut: '', action: () => { setActiveTab('ai'); setShowCommandPalette(false); } },
+    { id: 'act-ai-diag', category: 'Quick Action', title: 'Ask Local AI Assistant...', shortcut: '', action: () => { setShowAIAdvisor(true); setShowCommandPalette(false); } },
+    { id: 'act-sec-scan', category: 'Quick Action', title: 'Run Security Configuration Audit', shortcut: '', action: () => { setActiveTab('security'); setShowCommandPalette(false); handleRunSecurityAudit(); } },
+    { id: 'act-routes', category: 'Quick Action', title: 'Refresh Laravel Route Catalog', shortcut: '', action: () => { setActiveTab('routes'); setShowCommandPalette(false); handleRefreshRoutes(); } },
+    { id: 'act-purge', category: 'Quick Action', title: 'Purge Old Telemetry Storage (NFR-06)', shortcut: '', action: () => { setActiveTab('projects'); setShowCommandPalette(false); handlePurgeTelemetry(); } },
+    { id: 'act-sim-wh', category: 'Quick Action', title: 'Simulate Inbound Webhook Payload', shortcut: '', action: () => { setActiveTab('webhooks'); setShowCommandPalette(false); handleSimulateWebhook(); } },
+  ];
+
+  const filteredPaletteCommands = paletteCommands.filter((c) =>
+    c.title.toLowerCase().includes(paletteQuery.toLowerCase()) ||
+    c.category.toLowerCase().includes(paletteQuery.toLowerCase())
+  );
+
   // Keyboard Shortcuts & WCAG 2.1 AA Navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Cmd+K or Ctrl+K toggles Command Palette
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setShowCommandPalette((prev) => !prev);
+        setPaletteQuery('');
+        setPaletteIndex(0);
+        return;
+      }
+
       // Escape closes modals
       if (e.key === 'Escape') {
         setShowImportModal(false);
         setShowCookieJar(false);
         setShowAIAdvisor(false);
+        setShowCommandPalette(false);
+      }
+
+      // Keyboard navigation inside Command Palette
+      if (showCommandPalette) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setPaletteIndex((prev) => (filteredPaletteCommands.length > 0 ? (prev + 1) % filteredPaletteCommands.length : 0));
+          return;
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setPaletteIndex((prev) => (filteredPaletteCommands.length > 0 ? (prev - 1 + filteredPaletteCommands.length) % filteredPaletteCommands.length : 0));
+          return;
+        }
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          if (filteredPaletteCommands[paletteIndex]) {
+            filteredPaletteCommands[paletteIndex].action();
+          }
+          return;
+        }
       }
 
       // Cmd+Enter or Ctrl+Enter executes primary action
@@ -994,7 +1059,7 @@ export function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeTab, apiMode, url, method, reqBody, gqlQuery, gqlVariables, selectedProjectId]);
+  }, [activeTab, apiMode, url, method, reqBody, gqlQuery, gqlVariables, selectedProjectId, showCommandPalette, filteredPaletteCommands, paletteIndex]);
 
   const activeProject = projects.find((p) => p.id === selectedProjectId);
 
@@ -1183,6 +1248,39 @@ export function App() {
           >
             <span>🤖</span>
             <span>Local AI</span>
+          </button>
+
+          {/* Quick Switcher / Command Palette Trigger (Cmd+K) */}
+          <button
+            onClick={() => {
+              setShowCommandPalette(true);
+              setPaletteQuery('');
+              setPaletteIndex(0);
+            }}
+            title="Command Palette & Quick Search (Cmd+K / Ctrl+K)"
+            style={{
+              padding: '6px 12px',
+              backgroundColor: 'var(--bg-card)',
+              color: 'var(--text-secondary)',
+              border: '1px solid var(--border-color)',
+              borderRadius: '6px',
+              fontSize: '12px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            <span>🔍</span>
+            <span style={{ display: 'none', md: 'inline' } as any}>Search or jump to...</span>
+            <kbd style={{
+              fontSize: '10px',
+              padding: '1px 5px',
+              backgroundColor: 'var(--bg-panel)',
+              borderRadius: '3px',
+              border: '1px solid var(--border-color)',
+              color: 'var(--text-secondary)'
+            }}>⌘K</kbd>
           </button>
 
           {/* Theme Selector (WCAG 2.1 AA) */}
@@ -6445,6 +6543,152 @@ window.addEventListener('error', (e) => {
               }}>
                 {aiResponse || '// Run diagnosis above to see local AI performance analysis'}
               </pre>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Global Command Palette & Quick Switcher Modal (Cmd+K) */}
+      {showCommandPalette && (
+        <div
+          onClick={() => setShowCommandPalette(false)}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.65)',
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'center',
+            paddingTop: '12vh',
+            zIndex: 2000
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '620px',
+              backgroundColor: 'var(--bg-panel)',
+              borderRadius: '8px',
+              border: '1px solid var(--border-color)',
+              boxShadow: '0 20px 40px rgba(0, 0, 0, 0.6)',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column'
+            }}
+          >
+            {/* Search Input Bar */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              padding: '14px 16px',
+              borderBottom: '1px solid var(--border-color)',
+              gap: '10px'
+            }}>
+              <span style={{ fontSize: '16px' }}>🔍</span>
+              <input
+                autoFocus
+                type="text"
+                value={paletteQuery}
+                onChange={(e) => {
+                  setPaletteQuery(e.target.value);
+                  setPaletteIndex(0);
+                }}
+                placeholder="Search commands, studio tabs, or actions..."
+                style={{
+                  flex: 1,
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  outline: 'none',
+                  color: 'var(--text-primary)',
+                  fontSize: '14px'
+                }}
+              />
+              <kbd style={{
+                fontSize: '11px',
+                padding: '2px 6px',
+                backgroundColor: 'var(--bg-card)',
+                borderRadius: '4px',
+                border: '1px solid var(--border-color)',
+                color: 'var(--text-secondary)'
+              }}>ESC</kbd>
+            </div>
+
+            {/* Commands List */}
+            <div style={{ maxHeight: '340px', overflowY: 'auto', padding: '6px' }}>
+              {filteredPaletteCommands.length === 0 ? (
+                <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                  No matching commands found.
+                </div>
+              ) : (
+                filteredPaletteCommands.map((cmd, idx) => (
+                  <div
+                    key={cmd.id}
+                    onClick={() => cmd.action()}
+                    onMouseEnter={() => setPaletteIndex(idx)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '10px 12px',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      backgroundColor: idx === paletteIndex ? 'var(--accent)' : 'transparent',
+                      color: idx === paletteIndex ? '#fff' : 'var(--text-primary)'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{
+                        fontSize: '10px',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.5px',
+                        padding: '2px 6px',
+                        borderRadius: '4px',
+                        backgroundColor: idx === paletteIndex ? 'rgba(255,255,255,0.2)' : 'var(--bg-card)',
+                        color: idx === paletteIndex ? '#fff' : 'var(--text-secondary)',
+                        fontWeight: 600
+                      }}>
+                        {cmd.category}
+                      </span>
+                      <span style={{ fontSize: '13px', fontWeight: 500 }}>{cmd.title}</span>
+                    </div>
+
+                    {cmd.shortcut && (
+                      <kbd style={{
+                        fontSize: '11px',
+                        padding: '2px 6px',
+                        borderRadius: '4px',
+                        backgroundColor: idx === paletteIndex ? 'rgba(255,255,255,0.2)' : 'var(--bg-card)',
+                        color: idx === paletteIndex ? '#fff' : 'var(--text-secondary)',
+                        border: idx === paletteIndex ? 'none' : '1px solid var(--border-color)'
+                      }}>
+                        {cmd.shortcut}
+                      </kbd>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Footer Hint */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '8px 14px',
+              backgroundColor: 'var(--bg-card)',
+              borderTop: '1px solid var(--border-color)',
+              fontSize: '11px',
+              color: 'var(--text-secondary)'
+            }}>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <span>↑↓ navigate</span>
+                <span>↵ select</span>
+                <span>esc dismiss</span>
+              </div>
+              <span>PHP Debug Studio by zoventra</span>
             </div>
           </div>
         </div>
