@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from './api/client';
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<'api' | 'traces' | 'sql' | 'logs' | 'tests' | 'artisan' | 'queues' | 'security' | 'routes' | 'xdebug' | 'webhooks' | 'jsdebug' | 'streams' | 'projects'>('api');
+  const [activeTab, setActiveTab] = useState<'api' | 'traces' | 'sql' | 'logs' | 'tests' | 'artisan' | 'queues' | 'security' | 'routes' | 'xdebug' | 'webhooks' | 'jsdebug' | 'streams' | 'projects' | 'ai'>('api');
   const [health, setHealth] = useState<any>(null);
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
@@ -118,6 +118,18 @@ export function App() {
   const [aiPrompt, setAiPrompt] = useState<string>('How do I optimize an Eloquent query that triggers N+1 problems?');
   const [aiResponse, setAiResponse] = useState<string>('');
   const [aiLoading, setAiLoading] = useState<boolean>(false);
+
+  // AI Solution Advisor Studio state (Module 26)
+  const [aiMode, setAiMode] = useState<'error' | 'sql' | 'chat'>('error');
+  const [aiStatus, setAiStatus] = useState<{ available: boolean; endpoint: string; models: string[] } | null>(null);
+  const [aiSelectedModel, setAiSelectedModel] = useState<string>('llama3.2:3b');
+  const [aiErrorMsg, setAiErrorMsg] = useState<string>('Illuminate\\Database\\QueryException: SQLSTATE[42S22]: Column not found: 1054 Unknown column "created_by" in "where clause"');
+  const [aiErrorStack, setAiErrorStack] = useState<string>('#0 /var/www/html/vendor/laravel/framework/src/Illuminate/Database/Connection.php(712): Illuminate\\Database\\Connection->runQueryCallback(...)\n#1 /var/www/html/app/Http/Controllers/UserProfileController.php(48): App\\Models\\UserProfile::where("created_by", 1)->first()');
+  const [aiSqlInput, setAiSqlInput] = useState<string>('SELECT * FROM orders WHERE status = "pending" ORDER BY created_at DESC;');
+  const [aiExplainInput, setAiExplainInput] = useState<string>('Access Type: ALL | Cost: 240.00 | Table scan detected on table: orders. Missing composite index on (status, created_at)');
+  const [aiChatInput, setAiChatInput] = useState<string>('How do I properly implement idempotent database transactions in Laravel with database locks?');
+  const [aiResultText, setAiResultText] = useState<string>('');
+  const [aiExecuting, setAiExecuting] = useState<boolean>(false);
 
   // DBGp Debugger state
   const [debugSessions, setDebugSessions] = useState<any[]>([]);
@@ -306,6 +318,8 @@ export function App() {
     } else if (activeTab === 'projects') {
       loadWorkspaces();
       loadProjectEnvironments();
+    } else if (activeTab === 'ai') {
+      loadAIStatus();
     } else if (activeTab === 'streams') {
       const ws = new WebSocket('ws://127.0.0.1:8765/v1/events/stream');
       ws.onopen = () => setStreamConnected(true);
@@ -569,6 +583,49 @@ export function App() {
       setAiResponse(`Error: ${err.message}`);
     } finally {
       setAiLoading(false);
+    }
+  };
+
+  const loadAIStatus = () => {
+    api.getAIStatus()
+      .then((data) => {
+        setAiStatus(data);
+        if (data.models && data.models.length > 0 && !data.models.includes(aiSelectedModel)) {
+          setAiSelectedModel(data.models[0]);
+        }
+      })
+      .catch(() => setAiStatus({ available: false, endpoint: 'http://127.0.0.1:11434', models: [] }));
+  };
+
+  const handleExecuteAI = async () => {
+    setAiExecuting(true);
+    setAiResultText('');
+    try {
+      if (aiMode === 'error') {
+        const res = await api.explainErrorAI({
+          exception_message: aiErrorMsg,
+          stack_trace: aiErrorStack,
+          model: aiSelectedModel,
+        });
+        setAiResultText(res.explanation || '(No output returned)');
+      } else if (aiMode === 'sql') {
+        const res = await api.optimizeQueryAI({
+          sql_query: aiSqlInput,
+          explain_plan: aiExplainInput,
+          model: aiSelectedModel,
+        });
+        setAiResultText(res.recommendation || '(No output returned)');
+      } else {
+        const res = await api.diagnoseAI({
+          content: aiChatInput,
+          model: aiSelectedModel,
+        });
+        setAiResultText(res.response || '(No output returned)');
+      }
+    } catch (err: any) {
+      setAiResultText(`Error: ${err.message}`);
+    } finally {
+      setAiExecuting(false);
     }
   };
 
@@ -1242,6 +1299,7 @@ export function App() {
             { id: 'jsdebug', label: '🌐 JS & Frontend Studio' },
             { id: 'streams', label: '📡 Live Streams' },
             { id: 'projects', label: '📁 Projects & PHP Runtimes' },
+            { id: 'ai', label: '🤖 AI Solution Advisor' },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -5860,6 +5918,408 @@ window.addEventListener('error', (e) => {
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {activeTab === 'ai' && (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '14px', overflow: 'hidden' }}>
+              {/* Header and Status */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
+                <div>
+                  <h2 style={{ fontSize: '16px', fontWeight: 600 }}>Local AI Solution Advisor (Module 26)</h2>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Fully offline LLM diagnostics via Ollama (127.0.0.1:11434). Zero external cloud requests, zero telemetry tracking, and automated secret redaction (SEC-04, SEC-06).
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '12px',
+                    padding: '4px 10px',
+                    borderRadius: '12px',
+                    backgroundColor: aiStatus?.available ? 'rgba(63, 185, 80, 0.15)' : 'rgba(248, 81, 73, 0.15)',
+                    color: aiStatus?.available ? 'var(--success)' : 'var(--danger)',
+                    fontWeight: 600
+                  }}>
+                    <span style={{
+                      width: '8px',
+                      height: '8px',
+                      borderRadius: '50%',
+                      backgroundColor: aiStatus?.available ? 'var(--success)' : 'var(--danger)'
+                    }} />
+                    {aiStatus?.available ? 'OLLAMA ONLINE (127.0.0.1:11434)' : 'OLLAMA OFFLINE'}
+                  </div>
+
+                  <select
+                    value={aiSelectedModel}
+                    onChange={(e) => setAiSelectedModel(e.target.value)}
+                    style={{
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      border: '1px solid var(--border-color)',
+                      backgroundColor: 'var(--bg-card)',
+                      color: 'var(--accent)',
+                      fontSize: '12px',
+                      fontWeight: 600
+                    }}
+                  >
+                    {(aiStatus?.models && aiStatus.models.length > 0 ? aiStatus.models : ['llama3.2:3b', 'qwen2.5-coder:7b', 'codellama', 'mistral']).map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+
+                  <button
+                    onClick={loadAIStatus}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: 'var(--bg-card)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    🔄 Check Status
+                  </button>
+                </div>
+              </div>
+
+              {/* Offline Setup Callout when offline */}
+              {aiStatus && !aiStatus.available && (
+                <div style={{
+                  padding: '12px 16px',
+                  borderRadius: '6px',
+                  backgroundColor: 'rgba(210, 153, 34, 0.1)',
+                  border: '1px solid rgba(210, 153, 34, 0.3)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  fontSize: '12px'
+                }}>
+                  <div>
+                    <strong>Local Ollama not detected on loopback.</strong> Run <code>ollama run llama3.2:3b</code> in your terminal to start offline local inference.
+                  </div>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText('ollama run llama3.2:3b');
+                      alert('Copied "ollama run llama3.2:3b" to clipboard!');
+                    }}
+                    style={{
+                      padding: '4px 8px',
+                      backgroundColor: 'var(--bg-card)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '4px',
+                      fontSize: '11px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    📋 Copy Command
+                  </button>
+                </div>
+              )}
+
+              {/* Mode Selector Tabs */}
+              <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                {[
+                  { id: 'error', label: '💥 Crash & Exception Fixer' },
+                  { id: 'sql', label: '⚡ SQL & Eloquent Optimizer' },
+                  { id: 'chat', label: '💬 Architecture & Code Chat' },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setAiMode(tab.id as any)}
+                    style={{
+                      padding: '6px 14px',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border-color)',
+                      backgroundColor: aiMode === tab.id ? 'var(--accent)' : 'var(--bg-card)',
+                      color: aiMode === tab.id ? '#fff' : 'var(--text-secondary)',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* 2-Column Split Workspace */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', flex: 1, minHeight: 0 }}>
+                {/* Left Panel: Inputs & Sanitization Shield */}
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  backgroundColor: 'var(--bg-card)',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-color)',
+                  padding: '14px',
+                  gap: '12px',
+                  overflowY: 'auto'
+                }}>
+                  <div style={{ fontSize: '13px', fontWeight: 600 }}>Input Context & Diagnosis Target</div>
+
+                  {aiMode === 'error' && (
+                    <>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                          PHP EXCEPTION MESSAGE
+                        </label>
+                        <textarea
+                          value={aiErrorMsg}
+                          onChange={(e) => setAiErrorMsg(e.target.value)}
+                          rows={3}
+                          style={{
+                            width: '100%',
+                            padding: '8px',
+                            backgroundColor: 'var(--bg-main)',
+                            color: 'var(--text-primary)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '4px',
+                            fontSize: '12px',
+                            fontFamily: 'monospace',
+                            resize: 'vertical'
+                          }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                          STACK TRACE
+                        </label>
+                        <textarea
+                          value={aiErrorStack}
+                          onChange={(e) => setAiErrorStack(e.target.value)}
+                          rows={6}
+                          style={{
+                            width: '100%',
+                            padding: '8px',
+                            backgroundColor: 'var(--bg-main)',
+                            color: 'var(--text-primary)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '4px',
+                            fontSize: '11px',
+                            fontFamily: 'monospace',
+                            resize: 'vertical'
+                          }}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {aiMode === 'sql' && (
+                    <>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                          SQL QUERY TEMPLATE
+                        </label>
+                        <textarea
+                          value={aiSqlInput}
+                          onChange={(e) => setAiSqlInput(e.target.value)}
+                          rows={3}
+                          style={{
+                            width: '100%',
+                            padding: '8px',
+                            backgroundColor: 'var(--bg-main)',
+                            color: 'var(--text-primary)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '4px',
+                            fontSize: '12px',
+                            fontFamily: 'monospace',
+                            resize: 'vertical'
+                          }}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                          EXPLAIN PLAN / QUERY OBSERVATIONS
+                        </label>
+                        <textarea
+                          value={aiExplainInput}
+                          onChange={(e) => setAiExplainInput(e.target.value)}
+                          rows={5}
+                          style={{
+                            width: '100%',
+                            padding: '8px',
+                            backgroundColor: 'var(--bg-main)',
+                            color: 'var(--text-primary)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '4px',
+                            fontSize: '11px',
+                            fontFamily: 'monospace',
+                            resize: 'vertical'
+                          }}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {aiMode === 'chat' && (
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                      <label style={{ display: 'block', fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                        QUESTION OR ARCHITECTURE TOPIC
+                      </label>
+                      <textarea
+                        value={aiChatInput}
+                        onChange={(e) => setAiChatInput(e.target.value)}
+                        rows={8}
+                        style={{
+                          width: '100%',
+                          flex: 1,
+                          padding: '10px',
+                          backgroundColor: 'var(--bg-main)',
+                          color: 'var(--text-primary)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '4px',
+                          fontSize: '13px',
+                          resize: 'vertical'
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Privacy & Redaction Shield Badge (SEC-04) */}
+                  <div style={{
+                    padding: '8px 12px',
+                    borderRadius: '4px',
+                    backgroundColor: 'rgba(63, 185, 80, 0.1)',
+                    border: '1px solid rgba(63, 185, 80, 0.25)',
+                    fontSize: '11px',
+                    color: 'var(--text-primary)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '4px'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, color: 'var(--success)' }}>
+                      🛡️ Privacy Shield Active (SEC-04, SEC-06)
+                    </div>
+                    <div style={{ color: 'var(--text-secondary)', fontSize: '11px' }}>
+                      Sensitive credentials, API keys, passwords, and Authorization headers are automatically redacted with <code>[REDACTED]</code> before local inference. Zero cloud dispatch.
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleExecuteAI}
+                    disabled={aiExecuting}
+                    style={{
+                      padding: '10px',
+                      backgroundColor: 'var(--accent)',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {aiExecuting ? 'Running Local Ollama Inference...' : '🚀 Generate Local Diagnosis & Fix'}
+                  </button>
+                </div>
+
+                {/* Right Panel: Output & Patch View */}
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  backgroundColor: 'var(--bg-card)',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-color)',
+                  overflow: 'hidden'
+                }}>
+                  <div style={{
+                    padding: '10px 14px',
+                    borderBottom: '1px solid var(--border-color)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 600 }}>Diagnostic Output & Recommendations</span>
+                      <span style={{
+                        fontSize: '10px',
+                        padding: '2px 6px',
+                        borderRadius: '3px',
+                        backgroundColor: 'rgba(63, 185, 80, 0.15)',
+                        color: 'var(--success)',
+                        fontWeight: 700
+                      }}>
+                        OFFLINE INFERENCE
+                      </span>
+                    </div>
+
+                    {aiResultText && (
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(aiResultText);
+                          alert('Copied AI response to clipboard!');
+                        }}
+                        style={{
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          backgroundColor: 'transparent',
+                          color: 'var(--accent)',
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        📋 Copy Solution
+                      </button>
+                    )}
+                  </div>
+
+                  <div style={{ flex: 1, overflowY: 'auto', padding: '14px' }}>
+                    {aiExecuting ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '12px' }}>
+                        <div style={{ fontSize: '24px' }}>⏳</div>
+                        <div style={{ fontSize: '13px', fontWeight: 600 }}>Analyzing with {aiSelectedModel}...</div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Streaming response from local Ollama loopback</div>
+                      </div>
+                    ) : aiResultText ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <pre style={{
+                          padding: '12px',
+                          backgroundColor: 'var(--bg-main)',
+                          borderRadius: '4px',
+                          border: '1px solid var(--border-color)',
+                          fontSize: '12px',
+                          fontFamily: 'monospace',
+                          lineHeight: 1.6,
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word',
+                          margin: 0
+                        }}>
+                          {aiResultText}
+                        </pre>
+
+                        <div style={{
+                          padding: '8px 12px',
+                          borderRadius: '4px',
+                          backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                          border: '1px solid var(--border-color)',
+                          fontSize: '11px',
+                          color: 'var(--text-secondary)'
+                        }}>
+                          ⚠️ <strong>Human-in-the-loop:</strong> Recommendations and code refactors are generated locally for review and should never be automatically applied without inspection.
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '8px', color: 'var(--text-secondary)' }}>
+                        <div style={{ fontSize: '32px' }}>🤖</div>
+                        <div style={{ fontSize: '13px', fontWeight: 600 }}>Ready for Diagnosis</div>
+                        <div style={{ fontSize: '11px', textAlign: 'center', maxWidth: '300px' }}>
+                          Select an issue preset on the left and click "Generate Local Diagnosis & Fix" to produce actionable code solutions.
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </main>

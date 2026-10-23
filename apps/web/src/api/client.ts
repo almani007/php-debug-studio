@@ -127,4 +127,10 @@ export const api = {
     request<any[]>(`/projects/${projectId}/environments`),
   createProjectEnvironment: (projectId: string, data: { name: string; kind?: string; is_production?: boolean; sampling_rate?: number; retention_days?: number }) =>
     request<any>(`/projects/${projectId}/environments`, { method: 'POST', body: JSON.stringify(data) }),
+  getAIStatus: () =>
+    request<{ available: boolean; endpoint: string; models: string[] }>('/ai/status'),
+  explainErrorAI: (data: { exception_message: string; stack_trace: string; model?: string }) =>
+    request<{ explanation: string; model: string; offline: boolean }>('/ai/explain-error', { method: 'POST', body: JSON.stringify(data) }),
+  optimizeQueryAI: (data: { sql_query: string; explain_plan?: string; model?: string }) =>
+    request<{ recommendation: string; model: string; offline: boolean }>('/ai/optimize-query', { method: 'POST', body: JSON.stringify(data) }),
 };

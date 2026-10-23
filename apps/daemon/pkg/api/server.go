@@ -190,7 +190,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/queue/jobs/", s.handleQueueJobDetail)
 
 	// Local-First AI Diagnostics with Ollama (Module 26)
+	s.mux.HandleFunc("/v1/ai/status", s.handleAIStatus)
 	s.mux.HandleFunc("/v1/ai/diagnose", s.handleAIDiagnose)
+	s.mux.HandleFunc("/v1/ai/explain-error", s.handleAIExplainError)
+	s.mux.HandleFunc("/v1/ai/optimize-query", s.handleAIOptimizeQuery)
 
 	// Security Diagnostics Scanner (Module 19)
 	s.mux.HandleFunc("/v1/security/audit", s.handleSecurityAudit)
@@ -1224,6 +1227,15 @@ func VerifySignature(secret string, payload []byte, signature string) bool {
 	return hmac.Equal([]byte(signature), []byte(expectedMAC))
 }
 
+func (s *Server) handleAIStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	status := s.aiClient.GetStatus()
+	s.jsonResponse(w, http.StatusOK, status, nil)
+}
+
 func (s *Server) handleAIDiagnose(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -1265,6 +1277,80 @@ func (s *Server) handleAIDiagnose(w http.ResponseWriter, r *http.Request) {
 		"response": resp,
 		"model":    req.Model,
 		"offline":  true,
+	}, nil)
+}
+
+func (s *Server) handleAIExplainError(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		ExceptionMessage string `json:"exception_message"`
+		StackTrace       string `json:"stack_trace"`
+		Model            string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	if !s.aiClient.IsAvailable() {
+		s.jsonResponse(w, http.StatusServiceUnavailable, nil, &ErrorInfo{
+			Code:    "OLLAMA_OFFLINE",
+			Message: "Local Ollama service is not running on 127.0.0.1:11434. Start Ollama locally with `ollama run llama3.2:3b` to enable local-first AI diagnostics without cloud tracking.",
+		})
+		return
+	}
+
+	resp, err := s.aiClient.ExplainException(req.ExceptionMessage, req.StackTrace, req.Model)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "AI_ERROR", Message: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"explanation": resp,
+		"model":       req.Model,
+		"offline":     true,
+	}, nil)
+}
+
+func (s *Server) handleAIOptimizeQuery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		SQLQuery    string `json:"sql_query"`
+		ExplainPlan string `json:"explain_plan"`
+		Model       string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	if !s.aiClient.IsAvailable() {
+		s.jsonResponse(w, http.StatusServiceUnavailable, nil, &ErrorInfo{
+			Code:    "OLLAMA_OFFLINE",
+			Message: "Local Ollama service is not running on 127.0.0.1:11434. Start Ollama locally with `ollama run llama3.2:3b` to enable local-first AI diagnostics without cloud tracking.",
+		})
+		return
+	}
+
+	resp, err := s.aiClient.OptimizeQuery(req.SQLQuery, req.ExplainPlan, req.Model)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "AI_ERROR", Message: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"recommendation": resp,
+		"model":          req.Model,
+		"offline":        true,
 	}, nil)
 }
 
