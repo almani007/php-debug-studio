@@ -3,7 +3,7 @@
 **Free • Open Source • MIT License • Desktop + Browser + Composer SDK**  
 **Version 1.0 — Architecture baseline | 22 October 2026**  
 *Status: Proposed design baseline; implementation and compatibility require validation.*  
-*Maintained by: zoventra*
+*Maintained by: brixel*
 
 ---
 
@@ -198,7 +198,7 @@
 
 ### Installation Target
 ```bash
-composer require --dev zoventra/php-debug-studio-laravel
+composer require --dev brixel/php-debug-studio-laravel
 php artisan debug-studio:install
 php artisan debug-studio:doctor
 ```

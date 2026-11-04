@@ -111,6 +111,36 @@ export const api = {
     request<any>(`/db/recommendations/${recId}/status`, { method: 'POST', body: JSON.stringify({ status }) }),
   explainSQL: (sql: string, driver?: string) =>
     request<any>('/db/explain', { method: 'POST', body: JSON.stringify({ sql, driver: driver || 'mysql' }) }),
+  executeDBQuery: (connectionId: string, sql: string, limit?: number, allowMutation?: boolean) =>
+    request<any>('/db/query', { method: 'POST', body: JSON.stringify({ connection_id: connectionId, sql, limit: limit || 100, allow_mutation: !!allowMutation }) }),
+  getTableData: (connectionId: string, table: string, page = 1, pageSize = 50, sortCol = '', sortDir = '', filter = '') =>
+    request<any>(`/db/table/data?connection_id=${encodeURIComponent(connectionId)}&table=${encodeURIComponent(table)}&page=${page}&page_size=${pageSize}&sort_col=${encodeURIComponent(sortCol)}&sort_dir=${encodeURIComponent(sortDir)}&filter=${encodeURIComponent(filter)}`),
+  insertTableRow: (connectionId: string, table: string, data: any) =>
+    request<any>('/db/table/row', { method: 'POST', body: JSON.stringify({ connection_id: connectionId, table, data }) }),
+  updateTableRow: (connectionId: string, table: string, pkCol: string, pkVal: any, updates: any) =>
+    request<any>('/db/table/row', { method: 'PATCH', body: JSON.stringify({ connection_id: connectionId, table, pk_col: pkCol, pk_val: pkVal, updates }) }),
+  deleteTableRow: (connectionId: string, table: string, pkCol: string, pkVal: any) =>
+    request<any>('/db/table/row', { method: 'DELETE', body: JSON.stringify({ connection_id: connectionId, table, pk_col: pkCol, pk_val: pkVal }) }),
+  truncateTable: (connectionId: string, table: string) =>
+    request<any>('/db/table/truncate', { method: 'POST', body: JSON.stringify({ connection_id: connectionId, table }) }),
+  dropTable: (connectionId: string, table: string) =>
+    request<any>('/db/table/drop', { method: 'POST', body: JSON.stringify({ connection_id: connectionId, table }) }),
+  getTableDDL: (connectionId: string, table: string) =>
+    request<{ table: string; ddl: string }>(`/db/table/ddl?connection_id=${encodeURIComponent(connectionId)}&table=${encodeURIComponent(table)}`),
+  getDatabaseRelations: (connectionId: string) =>
+    request<{ nodes: any[]; edges: any[] }>(`/db/relations?connection_id=${encodeURIComponent(connectionId)}`),
+  getDatabaseStats: (connectionId: string) =>
+    request<any>(`/db/stats?connection_id=${encodeURIComponent(connectionId)}`),
+  optimizeDatabase: (connectionId: string, table?: string) =>
+    request<{ message: string }>('/db/optimize', { method: 'POST', body: JSON.stringify({ connection_id: connectionId, table: table || '' }) }),
+  getActiveProcesses: (connectionId: string) =>
+    request<any[]>(`/db/processes?connection_id=${encodeURIComponent(connectionId)}`),
+  getDBSchema: (connectionId?: string) =>
+    request<any>(`/db/schema${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ''}`),
+  testDBConnection: (connectionId: string) =>
+    request<any>(`/db/connections/${encodeURIComponent(connectionId)}/test`, { method: 'POST', body: JSON.stringify({}) }),
+  testRawDBConnection: (data: any) =>
+    request<any>('/db/connections/test', { method: 'POST', body: JSON.stringify(data) }),
   deleteProject: (id: string) =>
     request<any>(`/projects/${id}`, { method: 'DELETE' }),
   getWorkspaces: () =>
@@ -133,4 +163,12 @@ export const api = {
     request<{ explanation: string; model: string; offline: boolean }>('/ai/explain-error', { method: 'POST', body: JSON.stringify(data) }),
   optimizeQueryAI: (data: { sql_query: string; explain_plan?: string; model?: string }) =>
     request<{ recommendation: string; model: string; offline: boolean }>('/ai/optimize-query', { method: 'POST', body: JSON.stringify(data) }),
+  runQASmoke: (data: { base_url: string; project_path?: string; endpoints?: string[] }) =>
+    request<any>('/qa/smoke', { method: 'POST', body: JSON.stringify(data) }),
+  runQAFuzz: (data: { target_url: string; method?: string; parameter?: string }) =>
+    request<any>('/qa/fuzz', { method: 'POST', body: JSON.stringify(data) }),
+  runQABenchmark: (data: { target_url: string; method?: string; concurrency?: number; total_requests?: number }) =>
+    request<any>('/qa/benchmark', { method: 'POST', body: JSON.stringify(data) }),
+  probeLiveMonitor: (data: { url: string }) =>
+    request<any>('/monitor/probe', { method: 'POST', body: JSON.stringify(data) }),
 };

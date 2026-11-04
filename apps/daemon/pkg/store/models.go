@@ -14,22 +14,10 @@ type Project struct {
 	RootPath       string    `json:"root_path"`
 	AppUrl         string    `json:"app_url"`
 	ConnectionMode string    `json:"connection_mode"`
+	ContainerName  string    `json:"container_name,omitempty"`
 	WorkspaceID    *string   `json:"workspace_id,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
-}
-
-type ProjectEnvironment struct {
-	ID                string    `json:"id"`
-	ProjectID         string    `json:"project_id"`
-	Name              string    `json:"name"`
-	Kind              string    `json:"kind"`
-	CollectorUrl      string    `json:"collector_url"`
-	IsProduction      bool      `json:"is_production"`
-	CapturePolicyJSON string    `json:"capture_policy_json"`
-	SamplingRate      float64   `json:"sampling_rate"`
-	RetentionDays     int       `json:"retention_days"`
-	CreatedAt         time.Time `json:"created_at"`
 }
 
 type Trace struct {
@@ -106,20 +94,4 @@ type WebhookReceiver struct {
 	Enabled      bool      `json:"enabled"`
 	MaxBodyBytes int       `json:"max_body_bytes"`
 	CreatedAt    time.Time `json:"created_at"`
-}
-
-type WebhookEvent struct {
-	ID                 string    `json:"id"`
-	ReceiverID         string    `json:"receiver_id"`
-	Provider           string    `json:"provider"`
-	EventType          string    `json:"event_type"`
-	ProviderEventID    string    `json:"provider_event_id"`
-	Method             string    `json:"method"`
-	Path               string    `json:"path"`
-	HeadersRedactedJSON string   `json:"headers_redacted_json"`
-	BodyRedacted       []byte    `json:"body_redacted"`
-	BodySha256         string    `json:"body_sha256"`
-	ReceivedAt         time.Time `json:"received_at"`
-	SignatureStatus    string    `json:"signature_status"`
-	TraceID            *string   `json:"trace_id,omitempty"`
 }

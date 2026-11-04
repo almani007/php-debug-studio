@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio\Tests;
+namespace Brixel\DebugStudio\Tests;
 
 use PHPUnit\Framework\TestCase;
-use Zoventra\DebugStudio\Advisor\ExplainAdvisor;
+use Brixel\DebugStudio\Advisor\ExplainAdvisor;
 
 class ExplainAdvisorTest extends TestCase
 {

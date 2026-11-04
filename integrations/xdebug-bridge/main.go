@@ -11,7 +11,7 @@ func main() {
 	localPrefix := flag.String("local-prefix", ".", "Local host source directory prefix")
 	flag.Parse()
 
-	log.Println("Starting PHP Debug Studio Xdebug Bridge (by zoventra)...")
+	log.Println("Starting PHP Debug Studio Xdebug Bridge (by brixel)...")
 	mapper := NewPathMapper(*remotePrefix, *localPrefix)
 	bridge := NewDBGpBridge(*listenAddr, mapper)
 

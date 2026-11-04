@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio\Loggers;
+namespace Brixel\DebugStudio\Loggers;
 
 use Psr\Log\AbstractLogger;
 use Psr\Log\LogLevel;
 use Stringable;
-use Zoventra\DebugStudio\DebugStudio;
+use Brixel\DebugStudio\DebugStudio;
 
 class DebugStudioLogger extends AbstractLogger
 {

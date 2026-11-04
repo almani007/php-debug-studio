@@ -61,8 +61,11 @@ func (d *PhpDetector) DetectAvailableRuntimes() []PhpRuntimeInfo {
 		"/usr/bin/php",
 	}
 
-	// Also glob /opt/homebrew/bin/php*
+	// Also glob /opt/homebrew/bin/php* and /usr/bin/php*
 	if matches, err := filepath.Glob("/opt/homebrew/bin/php*"); err == nil {
+		candidates = append(candidates, matches...)
+	}
+	if matches, err := filepath.Glob("/usr/bin/php*"); err == nil {
 		candidates = append(candidates, matches...)
 	}
 

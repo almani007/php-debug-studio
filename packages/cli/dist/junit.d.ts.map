@@ -1,0 +1,1 @@
+{"version":3,"file":"junit.d.ts","sourceRoot":"","sources":["../src/junit.ts"],"names":[],"mappings":"AAAA,MAAM,WAAW,UAAU;IACzB,IAAI,EAAE,MAAM,CAAC;IACb,MAAM,EAAE,OAAO,CAAC;IAChB,UAAU,EAAE,MAAM,CAAC;IACnB,cAAc,CAAC,EAAE,MAAM,CAAC;CACzB;AAED,wBAAgB,mBAAmB,CAAC,SAAS,EAAE,MAAM,EAAE,OAAO,EAAE,UAAU,EAAE,GAAG,MAAM,CAqBpF"}

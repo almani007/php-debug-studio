@@ -10,10 +10,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"zoventra/php-debug-studio/daemon/pkg/api"
-	"zoventra/php-debug-studio/daemon/pkg/executor"
-	"zoventra/php-debug-studio/daemon/pkg/store"
-	"zoventra/php-debug-studio/daemon/pkg/ws"
+	"brixel/php-debug-studio/daemon/pkg/api"
+	"brixel/php-debug-studio/daemon/pkg/executor"
+	"brixel/php-debug-studio/daemon/pkg/store"
+	"brixel/php-debug-studio/daemon/pkg/ws"
 )
 
 func setupTestServer(t *testing.T) (*api.Server, *store.Store) {

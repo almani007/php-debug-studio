@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio\Profiling;
+namespace Brixel\DebugStudio\Profiling;
 
 class MemorySampler
 {

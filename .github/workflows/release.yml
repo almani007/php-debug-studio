@@ -109,7 +109,7 @@ jobs:
           projectPath: "./apps/desktop"
           tagName: ${{ github.ref_name }}
           releaseName: "PHP Debug Studio ${{ github.ref_name }}"
-          releaseBody: "Cross-platform Desktop Application and Local Daemon by zoventra"
+          releaseBody: "Cross-platform Desktop Application and Local Daemon by Brixel"
 
   publish-release:
     name: Create GitHub Release

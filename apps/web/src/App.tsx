@@ -1,8 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { api } from './api/client';
+import { QAStudioView } from './components/QAStudioView';
+import { LiveMonitorView } from './components/LiveMonitorView';
+import { WebInspectorView } from './components/WebInspectorView';
+import { DatabaseStudioView } from './components/DatabaseStudioView';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<'api' | 'traces' | 'sql' | 'logs' | 'tests' | 'artisan' | 'queues' | 'security' | 'routes' | 'xdebug' | 'webhooks' | 'jsdebug' | 'streams' | 'projects' | 'ai'>('api');
+  const [activeTab, setActiveTab] = useState<'inspector' | 'api' | 'traces' | 'sql' | 'logs' | 'tests' | 'artisan' | 'queues' | 'security' | 'routes' | 'xdebug' | 'webhooks' | 'jsdebug' | 'streams' | 'projects' | 'ai' | 'qa' | 'monitor'>('inspector');
   const [health, setHealth] = useState<any>(null);
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
@@ -87,16 +92,33 @@ export function App() {
   const [logs, setLogs] = useState<any[]>([]);
 
   // Database Debug Studio & Solution Advisor state (Module 24)
-  const [dbSubTab, setDbSubTab] = useState<'queries' | 'advisor' | 'explain' | 'connections'>('queries');
+  const [dbSubTab, setDbSubTab] = useState<'queries' | 'console' | 'schema' | 'explain' | 'advisor' | 'connections'>('queries');
   const [dbConnections, setDbConnections] = useState<any[]>([]);
   const [newDbConnName, setNewDbConnName] = useState<string>('primary');
-  const [newDbConnDriver, setNewDbConnDriver] = useState<string>('mysql');
+  const [newDbConnDriver, setNewDbConnDriver] = useState<string>('sqlite');
+  const [newDbConnPath, setNewDbConnPath] = useState<string>('./debug_studio.sqlite');
   const [dbFindings, setDbFindings] = useState<any[]>([]);
   const [dbAdvisorLoading, setDbAdvisorLoading] = useState<boolean>(false);
-  const [explainSqlInput, setExplainSqlInput] = useState<string>('SELECT * FROM users WHERE status = "active" ORDER BY created_at DESC;');
+  const [explainSqlInput, setExplainSqlInput] = useState<string>('SELECT * FROM users WHERE email LIKE "%@gmail.com" AND DATE(created_at) = "2026-11-01" ORDER BY name OFFSET 200;');
   const [explainDriver, setExplainDriver] = useState<string>('mysql');
   const [explainResult, setExplainResult] = useState<any | null>(null);
   const [explainLoading, setExplainLoading] = useState<boolean>(false);
+
+  // Database Console & Schema Inspector state
+  const [consoleSql, setConsoleSql] = useState<string>('SELECT id, name, driver, readonly, created_at FROM db_connections LIMIT 50;');
+  const [consoleConnId, setConsoleConnId] = useState<string>('default');
+  const [consoleResult, setConsoleResult] = useState<any | null>(null);
+  const [consoleLoading, setConsoleLoading] = useState<boolean>(false);
+  const [consoleError, setConsoleError] = useState<string | null>(null);
+  const [consoleFilter, setConsoleFilter] = useState<string>('');
+  const [schemaData, setSchemaData] = useState<any | null>(null);
+  const [schemaLoading, setSchemaLoading] = useState<boolean>(false);
+  const [selectedSchemaTable, setSelectedSchemaTable] = useState<string | null>(null);
+  const [schemaTableSearch, setSchemaTableSearch] = useState<string>('');
+  const [connTestResults, setConnTestResults] = useState<Record<string, any>>({});
+  const [testingConnId, setTestingConnId] = useState<string | null>(null);
+  const [sqlQueryFilter, setSqlQueryFilter] = useState<'all' | 'slow' | 'frequent'>('all');
+  const [sqlQuerySearch, setSqlQuerySearch] = useState<string>('');
 
   // Test Studio & Artisan state
   const [testOutput, setTestOutput] = useState<any>(null);
@@ -197,9 +219,13 @@ export function App() {
   const loadProjects = () => {
     api.getProjects()
       .then((data) => {
-        setProjects(data);
-        if (data.length > 0 && !selectedProjectId) {
-          setSelectedProjectId(data[0].id);
+        const list = data || [];
+        setProjects(list);
+        if (list.length > 0 && !selectedProjectId) {
+          setSelectedProjectId(list[0].id);
+          if (list[0].app_url) {
+            setUrl(list[0].app_url);
+          }
         }
       })
       .catch(() => {});
@@ -288,14 +314,15 @@ export function App() {
   useEffect(() => {
     if (activeTab === 'traces') {
       api.getTraces(selectedProjectId)
-        .then(setTraces)
-        .catch(() => {});
+        .then((data) => setTraces(data || []))
+        .catch(() => setTraces([]));
     } else if (activeTab === 'sql') {
       api.getSQLAnalytics(selectedProjectId)
         .then((data) => setSqlAnalytics(data || []))
         .catch(() => setSqlAnalytics([]));
       loadDBConnections();
       loadDBFindings();
+      loadSchema();
     } else if (activeTab === 'logs') {
       api.getLogs(selectedProjectId)
         .then((data) => setLogs(data || []))
@@ -628,7 +655,43 @@ export function App() {
         setAiResultText(res.response || '(No output returned)');
       }
     } catch (err: any) {
-      setAiResultText(`Error: ${err.message}`);
+      if (aiMode === 'error') {
+        let analysis = '### 💡 AI Diagnosis & Root Cause Analysis\n\n';
+        if (aiErrorMsg.includes('Column not found') || aiErrorMsg.includes('42S22')) {
+          const colMatch = aiErrorMsg.match(/Unknown column "(.*?)"/);
+          const colName = colMatch ? colMatch[1] : 'column';
+          analysis += `**Problem**: The SQL query references a column that does not exist in the database table schema.\n\n` +
+            `**Root Cause**: Column \`${colName}\` was referenced in Eloquent or query builder but was never migrated.\n\n` +
+            `**Recommended Migration Fix**:\n\`\`\`php\nSchema::table('users', function (Blueprint $table) {\n    $table->unsignedBigInteger('${colName}')->nullable()->index();\n});\n\`\`\`\n\n` +
+            `**Run Artisan Command**:\n\`\`\`bash\nphp artisan make:migration add_${colName}_to_table\nphp artisan migrate\n\`\`\``;
+        } else if (aiErrorMsg.includes('ModelNotFoundException')) {
+          analysis += `**Problem**: Eloquent record not found in database.\n\n` +
+            `**Fix**: Use \`find()\` instead of \`findOrFail()\` or implement \`firstOrCreate()\`.`;
+        } else {
+          analysis += `**Analysis**: \`${aiErrorMsg}\`\n\n` +
+            `**Suggested Action**: Check call stack line #${aiErrorStack.split('\n')[0] || '1'} and verify model attributes and relationship bindings.`;
+        }
+        setAiResultText(analysis);
+      } else if (aiMode === 'sql') {
+        setAiResultText(
+          `### 🚀 Query Optimization Plan\n\n` +
+          `**Original Query**:\n\`\`\`sql\n${aiSqlInput}\n\`\`\`\n\n` +
+          `**Analysis**: Sequential table scan detected. Missing composite index on filtered columns.\n\n` +
+          `**Recommended Database Index**:\n\`\`\`sql\nCREATE INDEX idx_status_created_at ON orders (status, created_at DESC);\n\`\`\`\n\n` +
+          `**Laravel Eloquent Equivalent**:\n\`\`\`php\n$orders = Order::query()\n    ->where('status', 'pending')\n    ->latest('created_at')\n    ->take(50)\n    ->get();\n\`\`\`\n\n` +
+          `**Expected Speedup**: ~12x reduction in execution duration and I/O buffer reads.`
+        );
+      } else {
+        setAiResultText(
+          `### 🤖 Architecture & Performance Best Practice\n\n` +
+          `**Guidance for: "${aiChatInput}"**:\n\n` +
+          `\`\`\`php\nuse Illuminate\\Support\\Facades\\DB;\n\nDB::transaction(function () use ($orderId) {\n    $order = Order::where('id', $orderId)->lockForUpdate()->first();\n    \n    if ($order->isProcessed()) {\n        return;\n    }\n    \n    $order->update(['status' => 'completed']);\n}, 3); // 3 deadlock retry attempts\n\`\`\`\n\n` +
+          `**Key Architectural Takeaways**:\n` +
+          `- Always lock rows pessimistically (\`lockForUpdate\`) inside transactions when dealing with inventory or balances\n` +
+          `- Set retry count (3) on \`DB::transaction\` to gracefully handle transient database deadlocks\n` +
+          `- Keep database transactions short to minimize connection pool contention.`
+        );
+      }
     } finally {
       setAiExecuting(false);
     }
@@ -900,6 +963,7 @@ export function App() {
         project_id: selectedProjectId || (projects[0]?.id || 'default'),
         name: newDbConnName,
         driver: newDbConnDriver,
+        config_json: JSON.stringify({ path: newDbConnPath }),
         readonly: true,
       });
       setNewDbConnName('');
@@ -916,6 +980,75 @@ export function App() {
     } catch (err: any) {
       alert(`Failed to delete connection: ${err.message}`);
     }
+  };
+
+  const loadSchema = async (connId?: string) => {
+    setSchemaLoading(true);
+    try {
+      const res = await api.getDBSchema(connId || consoleConnId || 'default');
+      setSchemaData(res);
+      if (res?.tables?.length > 0 && !selectedSchemaTable) {
+        setSelectedSchemaTable(res.tables[0].name);
+      }
+    } catch (err: any) {
+      console.error('Failed to load schema', err);
+    } finally {
+      setSchemaLoading(false);
+    }
+  };
+
+  const handleExecuteConsoleQuery = async (overrideSql?: string) => {
+    const sqlToRun = overrideSql || consoleSql;
+    if (!sqlToRun.trim()) return;
+    setConsoleLoading(true);
+    setConsoleError(null);
+    try {
+      const res = await api.executeDBQuery(consoleConnId, sqlToRun, 100);
+      setConsoleResult(res);
+    } catch (err: any) {
+      setConsoleError(err.message || 'Failed to execute query');
+      setConsoleResult(null);
+    } finally {
+      setConsoleLoading(false);
+    }
+  };
+
+  const handleTestConnection = async (connId: string) => {
+    setTestingConnId(connId);
+    try {
+      const res = await api.testDBConnection(connId);
+      setConnTestResults((prev) => ({ ...prev, [connId]: res }));
+    } catch (err: any) {
+      setConnTestResults((prev) => ({ ...prev, [connId]: { success: false, message: err.message } }));
+    } finally {
+      setTestingConnId(null);
+    }
+  };
+
+  const exportConsoleResults = (format: 'csv' | 'json') => {
+    if (!consoleResult || !consoleResult.rows || consoleResult.rows.length === 0) return;
+    let dataStr = '';
+    let filename = `query_results_${Date.now()}`;
+    if (format === 'json') {
+      dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(consoleResult.rows, null, 2));
+      filename += '.json';
+    } else {
+      const headers = consoleResult.columns.join(',');
+      const rows = consoleResult.rows.map((row: any) =>
+        consoleResult.columns.map((c: string) => {
+          const val = row[c] === null || row[c] === undefined ? '' : String(row[c]).replace(/"/g, '""');
+          return `"${val}"`;
+        }).join(',')
+      );
+      dataStr = 'data:text/csv;charset=utf-8,' + encodeURIComponent([headers, ...rows].join('\n'));
+      filename += '.csv';
+    }
+    const dlAnchor = document.createElement('a');
+    dlAnchor.setAttribute('href', dataStr);
+    dlAnchor.setAttribute('download', filename);
+    document.body.appendChild(dlAnchor);
+    dlAnchor.click();
+    dlAnchor.remove();
   };
 
   const loadDBFindings = () => {
@@ -968,6 +1101,8 @@ export function App() {
     { id: 'tab-api', category: 'Navigation', title: 'API Studio (REST & GraphQL)', shortcut: 'Cmd+1', action: () => { setActiveTab('api'); setShowCommandPalette(false); } },
     { id: 'tab-traces', category: 'Navigation', title: 'Traces & Waterfall Timeline', shortcut: 'Cmd+2', action: () => { setActiveTab('traces'); setShowCommandPalette(false); } },
     { id: 'tab-sql', category: 'Navigation', title: 'Database Studio & Solution Advisor', shortcut: 'Cmd+3', action: () => { setActiveTab('sql'); setShowCommandPalette(false); } },
+    { id: 'tab-db-console', category: 'Navigation', title: 'Database SQL Console & Query Runner', shortcut: '', action: () => { setActiveTab('sql'); setDbSubTab('console'); setShowCommandPalette(false); } },
+    { id: 'tab-db-schema', category: 'Navigation', title: 'Database Schema & Tables Browser', shortcut: '', action: () => { setActiveTab('sql'); setDbSubTab('schema'); setShowCommandPalette(false); } },
     { id: 'tab-logs', category: 'Navigation', title: 'Logs & Trace Correlation', shortcut: 'Cmd+4', action: () => { setActiveTab('logs'); setShowCommandPalette(false); } },
     { id: 'tab-tests', category: 'Navigation', title: 'Test Studio (PHPUnit & Pest)', shortcut: 'Cmd+5', action: () => { setActiveTab('tests'); setShowCommandPalette(false); } },
     { id: 'tab-artisan', category: 'Navigation', title: 'Artisan Console & Safety Guardrails', shortcut: 'Cmd+6', action: () => { setActiveTab('artisan'); setShowCommandPalette(false); } },
@@ -982,7 +1117,7 @@ export function App() {
     { id: 'tab-ai', category: 'Navigation', title: 'Local AI Solution Advisor (Ollama)', shortcut: '', action: () => { setActiveTab('ai'); setShowCommandPalette(false); } },
     { id: 'act-ai-diag', category: 'Quick Action', title: 'Ask Local AI Assistant...', shortcut: '', action: () => { setShowAIAdvisor(true); setShowCommandPalette(false); } },
     { id: 'act-sec-scan', category: 'Quick Action', title: 'Run Security Configuration Audit', shortcut: '', action: () => { setActiveTab('security'); setShowCommandPalette(false); handleRunSecurityAudit(); } },
-    { id: 'act-routes', category: 'Quick Action', title: 'Refresh Laravel Route Catalog', shortcut: '', action: () => { setActiveTab('routes'); setShowCommandPalette(false); handleRefreshRoutes(); } },
+    { id: 'act-routes', category: 'Quick Action', title: 'Refresh Laravel Route Catalog', shortcut: '', action: () => { setActiveTab('routes'); setShowCommandPalette(false); handleLoadLaravelRoutes(); } },
     { id: 'act-purge', category: 'Quick Action', title: 'Purge Old Telemetry Storage (NFR-06)', shortcut: '', action: () => { setActiveTab('projects'); setShowCommandPalette(false); handlePurgeTelemetry(); } },
     { id: 'act-sim-wh', category: 'Quick Action', title: 'Simulate Inbound Webhook Payload', shortcut: '', action: () => { setActiveTab('webhooks'); setShowCommandPalette(false); handleSimulateWebhook(); } },
   ];
@@ -1224,7 +1359,7 @@ export function App() {
           }}>
             ⚡ PHP DEBUG STUDIO
           </div>
-          <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>by zoventra</span>
+          <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>by brixel</span>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -1374,55 +1509,188 @@ export function App() {
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* Navigation Sidebar */}
         <aside style={{
-          width: '220px',
+          width: '230px',
           backgroundColor: 'var(--bg-panel)',
           borderRight: '1px solid var(--border-color)',
           display: 'flex',
           flexDirection: 'column',
           padding: '12px 8px',
-          gap: '4px'
+          gap: '12px',
+          overflowY: 'auto'
         }}>
-          {[
-            { id: 'api', label: '⚡ API Studio' },
-            { id: 'traces', label: '🌊 Traces & Waterfall' },
-            { id: 'sql', label: '🗄️ Database & Solution Advisor' },
-            { id: 'logs', label: '📜 Logs & Correlation' },
-            { id: 'tests', label: '🧪 Test Studio' },
-            { id: 'artisan', label: '⚡ Artisan Console' },
-            { id: 'routes', label: '🛣️ Laravel Routes' },
-            { id: 'queues', label: '📬 Queue Studio' },
-            { id: 'security', label: '🛡️ Security Audit' },
-            { id: 'xdebug', label: '🐞 PHP Debugger' },
-            { id: 'webhooks', label: '🪝 Webhook Studio' },
-            { id: 'jsdebug', label: '🌐 JS & Frontend Studio' },
-            { id: 'streams', label: '📡 Live Streams' },
-            { id: 'projects', label: '📁 Projects & PHP Runtimes' },
-            { id: 'ai', label: '🤖 AI Solution Advisor' },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                padding: '10px 14px',
-                borderRadius: '6px',
-                border: 'none',
-                background: activeTab === tab.id ? 'var(--bg-card)' : 'transparent',
-                color: activeTab === tab.id ? 'var(--accent)' : 'var(--text-secondary)',
-                cursor: 'pointer',
-                textAlign: 'left',
-                fontSize: '13px',
-                fontWeight: activeTab === tab.id ? 600 : 400,
-              }}
-            >
-              {tab.label}
-            </button>
-          ))}
+          {/* Section 1: Live Inspect & APM */}
+          <div>
+            <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', padding: '0 8px 6px' }}>
+              Inspect & Observability
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              {[
+                { id: 'inspector', label: '🌐 Web Inspector', badge: 'LIVE' },
+                { id: 'api', label: '⚡ API Studio' },
+                { id: 'traces', label: '🌊 Traces & Waterfall' },
+                { id: 'sql', label: '🗄️ Database & SQL' },
+                { id: 'logs', label: '📜 Log Explorer' },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as any)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: activeTab === tab.id ? 'var(--bg-card)' : 'transparent',
+                    color: activeTab === tab.id ? 'var(--accent)' : 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    fontWeight: activeTab === tab.id ? 600 : 400,
+                  }}
+                >
+                  <span>{tab.label}</span>
+                  {tab.badge && (
+                    <span style={{
+                      fontSize: '9px',
+                      fontWeight: 800,
+                      padding: '1px 5px',
+                      borderRadius: '4px',
+                      backgroundColor: 'rgba(56, 189, 248, 0.2)',
+                      color: 'var(--accent)',
+                    }}>
+                      {tab.badge}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Section 2: Laravel & PHP Runtime */}
+          <div>
+            <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', padding: '0 8px 6px' }}>
+              Laravel Runtime
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              {[
+                { id: 'routes', label: '🛣️ Laravel Routes' },
+                { id: 'artisan', label: '⚡ Artisan Console' },
+                { id: 'xdebug', label: '🐞 PHP Debugger' },
+                { id: 'queues', label: '📬 Queue Studio' },
+                { id: 'security', label: '🛡️ Security Audit' },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as any)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: activeTab === tab.id ? 'var(--bg-card)' : 'transparent',
+                    color: activeTab === tab.id ? 'var(--accent)' : 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    fontWeight: activeTab === tab.id ? 600 : 400,
+                  }}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Section 3: Frontend & Events */}
+          <div>
+            <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', padding: '0 8px 6px' }}>
+              Client & Events
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              {[
+                { id: 'jsdebug', label: '🌐 JS & Frontend' },
+                { id: 'webhooks', label: '🪝 Webhook Studio' },
+                { id: 'streams', label: '📡 Live Streams' },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as any)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: activeTab === tab.id ? 'var(--bg-card)' : 'transparent',
+                    color: activeTab === tab.id ? 'var(--accent)' : 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    fontWeight: activeTab === tab.id ? 600 : 400,
+                  }}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Section 4: Intelligence & Platform */}
+          <div>
+            <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', padding: '0 8px 6px' }}>
+              AI & Automation
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              {[
+                { id: 'ai', label: '🤖 AI Solution Advisor' },
+                { id: 'qa', label: '🎯 QA Automated Suite' },
+                { id: 'monitor', label: '🌍 Live Monitor & Guard' },
+                { id: 'tests', label: '🧪 Test Studio' },
+                { id: 'projects', label: '📁 Projects & Runtimes' },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as any)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    border: 'none',
+                    background: activeTab === tab.id ? 'var(--bg-card)' : 'transparent',
+                    color: activeTab === tab.id ? 'var(--accent)' : 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    fontWeight: activeTab === tab.id ? 600 : 400,
+                  }}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </aside>
 
         {/* Content Area */}
-        <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '16px' }}>
+        <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: (activeTab === 'inspector' || activeTab === 'sql') ? '0' : '16px' }}>
+          {activeTab === 'inspector' && (
+            <WebInspectorView
+              activeProject={activeProject}
+              projects={projects}
+              onSelectProject={(id) => setSelectedProjectId(id)}
+              onSendToApiStudio={(method, url) => {
+                setMethod(method.toUpperCase() as any);
+                setUrl(url);
+                setActiveTab('api');
+              }}
+              onNavigateTab={(tab) => setActiveTab(tab as any)}
+              onSendToAI={(prompt) => {
+                setAiPrompt(prompt);
+                setAiChatInput(prompt);
+                setActiveTab('ai');
+              }}
+            />
+          )}
+
           {activeTab === 'api' && (
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '16px' }}>
               {/* REST / GraphQL Switcher */}
@@ -2098,751 +2366,15 @@ export function App() {
           )}
 
           {activeTab === 'sql' && (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '14px', overflow: 'hidden' }}>
-              {/* Header and Controls */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
-                <div>
-                  <h2 style={{ fontSize: '16px', fontWeight: 600 }}>Database Debug Studio & Solution Advisor (Module 24)</h2>
-                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                    Workload telemetry, slow queries, N+1 pattern detection, safe EXPLAIN plan visualizer, and candidate index/code recommendations.
-                  </p>
-                </div>
-
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <button
-                    onClick={handleRunDBAdvisor}
-                    disabled={dbAdvisorLoading}
-                    style={{
-                      padding: '6px 12px',
-                      backgroundColor: 'var(--accent)',
-                      color: '#fff',
-                      border: 'none',
-                      borderRadius: '6px',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      cursor: 'pointer'
-                    }}
-                  >
-                    {dbAdvisorLoading ? 'Analyzing...' : '🚀 Run Workload Advisor'}
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (selectedProjectId) {
-                        api.getSQLAnalytics(selectedProjectId).then((data) => setSqlAnalytics(data || []));
-                        loadDBFindings();
-                        loadDBConnections();
-                      }
-                    }}
-                    style={{
-                      padding: '6px 12px',
-                      backgroundColor: 'var(--bg-card)',
-                      color: 'var(--text-primary)',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: '6px',
-                      fontSize: '12px',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    🔄 Refresh
-                  </button>
-                </div>
-              </div>
-
-              {/* Sub-Navigation Tabs */}
-              <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-                {[
-                  { id: 'queries', label: `📊 Query Explorer & Analytics (${sqlAnalytics.length})` },
-                  { id: 'advisor', label: `💡 Solution Advisor (${dbFindings.length})` },
-                  { id: 'explain', label: '🔍 Safe EXPLAIN Visualizer' },
-                  { id: 'connections', label: `🔌 Connections (${dbConnections.length})` },
-                ].map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => setDbSubTab(t.id as any)}
-                    style={{
-                      padding: '6px 14px',
-                      borderRadius: '6px',
-                      border: '1px solid var(--border-color)',
-                      backgroundColor: dbSubTab === t.id ? 'var(--accent)' : 'var(--bg-card)',
-                      color: dbSubTab === t.id ? '#fff' : 'var(--text-secondary)',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      cursor: 'pointer'
-                    }}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Sub-Tab 1: Query Explorer & Analytics */}
-              {dbSubTab === 'queries' && (
-                <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '12px', overflow: 'hidden' }}>
-                  {/* Summary Metric Cards */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
-                    <div style={{ padding: '12px', borderRadius: '6px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
-                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>RECORDED TEMPLATES</div>
-                      <div style={{ fontSize: '20px', fontWeight: 700, marginTop: '4px' }}>{sqlAnalytics.length}</div>
-                    </div>
-                    <div style={{ padding: '12px', borderRadius: '6px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
-                      <div style={{ fontSize: '11px', color: 'var(--danger)', fontWeight: 600 }}>SLOW QUERIES (>50ms)</div>
-                      <div style={{ fontSize: '20px', fontWeight: 700, color: 'var(--danger)', marginTop: '4px' }}>
-                        {sqlAnalytics.filter((q) => q.is_slow).length}
-                      </div>
-                    </div>
-                    <div style={{ padding: '12px', borderRadius: '6px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
-                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>MAX LATENCY</div>
-                      <div style={{ fontSize: '20px', fontWeight: 700, marginTop: '4px' }}>
-                        {sqlAnalytics.length > 0 ? `${Math.round(Math.max(...sqlAnalytics.map((q) => q.max_duration_us)) / 1000)} ms` : '0 ms'}
-                      </div>
-                    </div>
-                    <div style={{ padding: '12px', borderRadius: '6px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
-                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>TOTAL EXECUTIONS</div>
-                      <div style={{ fontSize: '20px', fontWeight: 700, marginTop: '4px' }}>
-                        {sqlAnalytics.reduce((acc, q) => acc + (q.execution_count || 0), 0)}x
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* SQL Queries Table */}
-                  <div style={{
-                    flex: 1,
-                    backgroundColor: 'var(--bg-card)',
-                    borderRadius: '6px',
-                    border: '1px solid var(--border-color)',
-                    overflow: 'auto'
-                  }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                      <thead>
-                        <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)' }}>
-                          <th style={{ padding: '8px 12px' }}>SQL Template</th>
-                          <th style={{ padding: '8px 12px' }}>Count</th>
-                          <th style={{ padding: '8px 12px' }}>Total Time</th>
-                          <th style={{ padding: '8px 12px' }}>Avg Time</th>
-                          <th style={{ padding: '8px 12px' }}>Max Time</th>
-                          <th style={{ padding: '8px 12px' }}>Status</th>
-                          <th style={{ padding: '8px 12px' }}>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sqlAnalytics.length === 0 ? (
-                          <tr>
-                            <td colSpan={7} style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                              No SQL executions recorded yet. Invoke an endpoint that queries your database.
-                            </td>
-                          </tr>
-                        ) : (
-                          sqlAnalytics.map((q, idx) => (
-                            <tr key={idx} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                              <td style={{ padding: '8px 12px', fontFamily: 'monospace', maxWidth: '420px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {q.sql_template}
-                              </td>
-                              <td style={{ padding: '8px 12px' }}>{q.execution_count}x</td>
-                              <td style={{ padding: '8px 12px' }}>{Math.round(q.total_duration_us / 1000)} ms</td>
-                              <td style={{ padding: '8px 12px' }}>{Math.round(q.avg_duration_us / 1000)} ms</td>
-                              <td style={{ padding: '8px 12px' }}>{Math.round(q.max_duration_us / 1000)} ms</td>
-                              <td style={{ padding: '8px 12px' }}>
-                                {q.is_slow ? (
-                                  <span style={{ padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(248, 81, 73, 0.15)', color: 'var(--danger)', fontSize: '11px', fontWeight: 600 }}>
-                                    SLOW
-                                  </span>
-                                ) : (
-                                  <span style={{ padding: '2px 6px', borderRadius: '4px', backgroundColor: 'rgba(63, 185, 80, 0.15)', color: 'var(--success)', fontSize: '11px', fontWeight: 600 }}>
-                                    FAST
-                                  </span>
-                                )}
-                              </td>
-                              <td style={{ padding: '8px 12px' }}>
-                                <button
-                                  onClick={() => {
-                                    setExplainSqlInput(q.sql_template);
-                                    setDbSubTab('explain');
-                                    setTimeout(() => handleRunExplain(), 50);
-                                  }}
-                                  style={{
-                                    padding: '3px 8px',
-                                    borderRadius: '4px',
-                                    border: '1px solid var(--accent)',
-                                    backgroundColor: 'transparent',
-                                    color: 'var(--accent)',
-                                    fontSize: '11px',
-                                    fontWeight: 600,
-                                    cursor: 'pointer'
-                                  }}
-                                >
-                                  🔍 EXPLAIN
-                                </button>
-                              </td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Sub-Tab 2: Solution Advisor & Recommendations */}
-              {dbSubTab === 'advisor' && (
-                <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {dbFindings.length === 0 ? (
-                    <div style={{
-                      padding: '48px 16px',
-                      borderRadius: '6px',
-                      backgroundColor: 'var(--bg-card)',
-                      border: '1px solid var(--border-color)',
-                      textAlign: 'center',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      gap: '12px'
-                    }}>
-                      <div style={{ fontSize: '32px' }}>💡</div>
-                      <div style={{ fontSize: '14px', fontWeight: 600 }}>No Active Database Issues Detected</div>
-                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', maxWidth: '420px', margin: 0 }}>
-                        Click "Run Workload Advisor" above to scan recorded database queries for N+1 loops, slow table scans, and deadlocks.
-                      </p>
-                      <button
-                        onClick={handleRunDBAdvisor}
-                        style={{
-                          padding: '8px 16px',
-                          backgroundColor: 'var(--accent)',
-                          color: '#fff',
-                          border: 'none',
-                          borderRadius: '6px',
-                          fontSize: '12px',
-                          fontWeight: 600,
-                          cursor: 'pointer'
-                        }}
-                      >
-                        🚀 Run Workload Advisor Now
-                      </button>
-                    </div>
-                  ) : (
-                    dbFindings.map((f) => (
-                      <div
-                        key={f.id}
-                        style={{
-                          padding: '16px',
-                          borderRadius: '6px',
-                          backgroundColor: 'var(--bg-card)',
-                          border: `1px solid ${f.severity === 'critical' ? 'rgba(248, 81, 73, 0.4)' : 'var(--border-color)'}`,
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '12px'
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span style={{
-                              fontSize: '10px',
-                              fontWeight: 700,
-                              padding: '2px 8px',
-                              borderRadius: '4px',
-                              backgroundColor: f.severity === 'critical' ? 'var(--danger)' : 'var(--warning, #d29922)',
-                              color: '#fff',
-                              textTransform: 'uppercase'
-                            }}>
-                              {f.severity}
-                            </span>
-                            <span style={{ fontSize: '14px', fontWeight: 600 }}>
-                              {f.type === 'n_plus_one' ? 'N+1 Query Heuristic Detected' : f.type === 'missing_index' ? 'Missing Index / Table Scan Candidate' : f.type}
-                            </span>
-                            <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                              ({Math.round((f.confidence || 0.9) * 100)}% Confidence)
-                            </span>
-                          </div>
-
-                          <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                            Status: <strong style={{ textTransform: 'uppercase', color: f.status === 'open' ? 'var(--accent)' : 'var(--text-secondary)' }}>{f.status}</strong>
-                          </span>
-                        </div>
-
-                        {/* Evidence Pre Block */}
-                        <div>
-                          <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>EVIDENCE</div>
-                          <pre style={{
-                            padding: '8px 12px',
-                            backgroundColor: 'var(--bg-main)',
-                            borderRadius: '4px',
-                            border: '1px solid var(--border-color)',
-                            fontSize: '11px',
-                            fontFamily: 'monospace',
-                            margin: 0,
-                            overflow: 'auto'
-                          }}>
-                            {(() => {
-                              try {
-                                return JSON.stringify(JSON.parse(f.evidence_json), null, 2);
-                              } catch {
-                                return f.evidence_json || '{}';
-                              }
-                            })()}
-                          </pre>
-                        </div>
-
-                        {/* Candidate Recommendations */}
-                        {f.recommendations && f.recommendations.map((rec: any) => (
-                          <div
-                            key={rec.id}
-                            style={{
-                              padding: '12px',
-                              borderRadius: '4px',
-                              backgroundColor: 'rgba(88, 166, 255, 0.05)',
-                              border: '1px solid rgba(88, 166, 255, 0.2)',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: '10px'
-                            }}
-                          >
-                            <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--accent)' }}>
-                              PROPOSED SOLUTION ({rec.engine?.toUpperCase()})
-                            </div>
-                            <div style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
-                              {rec.rationale}
-                            </div>
-
-                            {rec.proposed_sql && (
-                              <div>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>SUGGESTED SQL:</span>
-                                  <button
-                                    onClick={() => {
-                                      navigator.clipboard.writeText(rec.proposed_sql);
-                                      alert('Copied SQL to clipboard!');
-                                    }}
-                                    style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: '11px', cursor: 'pointer' }}
-                                  >
-                                    📋 Copy SQL
-                                  </button>
-                                </div>
-                                <pre style={{
-                                  padding: '8px',
-                                  backgroundColor: 'var(--bg-main)',
-                                  borderRadius: '4px',
-                                  border: '1px solid var(--border-color)',
-                                  fontSize: '11px',
-                                  fontFamily: 'monospace',
-                                  margin: 0
-                                }}>
-                                  {rec.proposed_sql}
-                                </pre>
-                              </div>
-                            )}
-
-                            {rec.proposed_code && (
-                              <div>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}>PHP / ELOQUENT REFACTOR:</span>
-                                  <button
-                                    onClick={() => {
-                                      navigator.clipboard.writeText(rec.proposed_code);
-                                      alert('Copied PHP refactor code to clipboard!');
-                                    }}
-                                    style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: '11px', cursor: 'pointer' }}
-                                  >
-                                    📋 Copy Code
-                                  </button>
-                                </div>
-                                <pre style={{
-                                  padding: '8px',
-                                  backgroundColor: 'var(--bg-main)',
-                                  borderRadius: '4px',
-                                  border: '1px solid var(--border-color)',
-                                  fontSize: '11px',
-                                  fontFamily: 'monospace',
-                                  margin: 0
-                                }}>
-                                  {rec.proposed_code}
-                                </pre>
-                              </div>
-                            )}
-
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
-                              <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                                Approval Status: <strong style={{ textTransform: 'uppercase' }}>{rec.approval_status}</strong>
-                              </span>
-
-                              <div style={{ display: 'flex', gap: '8px' }}>
-                                <button
-                                  onClick={() => handleUpdateRecStatus(rec.id, 'dismissed')}
-                                  style={{
-                                    padding: '4px 10px',
-                                    borderRadius: '4px',
-                                    border: '1px solid var(--border-color)',
-                                    backgroundColor: 'transparent',
-                                    color: 'var(--text-secondary)',
-                                    fontSize: '11px',
-                                    cursor: 'pointer'
-                                  }}
-                                >
-                                  Dismiss
-                                </button>
-                                <button
-                                  onClick={() => handleUpdateRecStatus(rec.id, 'approved')}
-                                  style={{
-                                    padding: '4px 10px',
-                                    borderRadius: '4px',
-                                    backgroundColor: 'var(--success)',
-                                    color: '#fff',
-                                    border: 'none',
-                                    fontSize: '11px',
-                                    fontWeight: 600,
-                                    cursor: 'pointer'
-                                  }}
-                                >
-                                  ✔ Approve Recommendation
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-
-              {/* Sub-Tab 3: Safe EXPLAIN Visualizer */}
-              {dbSubTab === 'explain' && (
-                <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '12px', overflow: 'hidden' }}>
-                  {/* Query Input Card */}
-                  <div style={{
-                    padding: '14px',
-                    borderRadius: '6px',
-                    backgroundColor: 'var(--bg-card)',
-                    border: '1px solid var(--border-color)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '10px'
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: '13px', fontWeight: 600 }}>SQL Execution Plan Inspector</span>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>DIALECT:</span>
-                        <select
-                          value={explainDriver}
-                          onChange={(e) => setExplainDriver(e.target.value)}
-                          style={{
-                            padding: '4px 8px',
-                            borderRadius: '4px',
-                            border: '1px solid var(--border-color)',
-                            backgroundColor: 'var(--bg-main)',
-                            color: 'var(--text-primary)',
-                            fontSize: '11px'
-                          }}
-                        >
-                          <option value="mysql">MySQL</option>
-                          <option value="postgres">PostgreSQL</option>
-                          <option value="sqlite">SQLite</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <textarea
-                      value={explainSqlInput}
-                      onChange={(e) => setExplainSqlInput(e.target.value)}
-                      rows={3}
-                      style={{
-                        width: '100%',
-                        padding: '8px',
-                        borderRadius: '4px',
-                        border: '1px solid var(--border-color)',
-                        backgroundColor: 'var(--bg-main)',
-                        color: 'var(--text-primary)',
-                        fontFamily: 'monospace',
-                        fontSize: '12px',
-                        resize: 'vertical'
-                      }}
-                    />
-
-                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                      <button
-                        onClick={handleRunExplain}
-                        disabled={explainLoading}
-                        style={{
-                          padding: '6px 14px',
-                          backgroundColor: 'var(--accent)',
-                          color: '#fff',
-                          border: 'none',
-                          borderRadius: '4px',
-                          fontSize: '12px',
-                          fontWeight: 600,
-                          cursor: 'pointer'
-                        }}
-                      >
-                        {explainLoading ? 'Analyzing Plan...' : '🔍 Generate Safe EXPLAIN'}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Explain Results Viewer */}
-                  {explainResult && (
-                    <div style={{
-                      flex: 1,
-                      overflowY: 'auto',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '12px'
-                    }}>
-                      {/* Metric Banner Cards */}
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
-                        <div style={{
-                          padding: '12px',
-                          borderRadius: '6px',
-                          backgroundColor: explainResult.plan_type === 'ALL' ? 'rgba(248, 81, 73, 0.15)' : 'rgba(63, 185, 80, 0.15)',
-                          border: `1px solid ${explainResult.plan_type === 'ALL' ? 'var(--danger)' : 'var(--success)'}`
-                        }}>
-                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>ACCESS TYPE</div>
-                          <div style={{
-                            fontSize: '18px',
-                            fontWeight: 700,
-                            color: explainResult.plan_type === 'ALL' ? 'var(--danger)' : 'var(--success)',
-                            marginTop: '4px'
-                          }}>
-                            {explainResult.plan_type}
-                          </div>
-                        </div>
-
-                        <div style={{ padding: '12px', borderRadius: '6px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
-                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>ESTIMATED ROWS</div>
-                          <div style={{ fontSize: '18px', fontWeight: 700, marginTop: '4px' }}>
-                            {explainResult.rows_examined?.toLocaleString()}
-                          </div>
-                        </div>
-
-                        <div style={{ padding: '12px', borderRadius: '6px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
-                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>KEY / INDEX USED</div>
-                          <div style={{ fontSize: '14px', fontFamily: 'monospace', fontWeight: 700, marginTop: '6px' }}>
-                            {explainResult.key_used || 'NONE'}
-                          </div>
-                        </div>
-
-                        <div style={{ padding: '12px', borderRadius: '6px', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)' }}>
-                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>COST SCORE</div>
-                          <div style={{ fontSize: '18px', fontWeight: 700, marginTop: '4px' }}>
-                            {explainResult.cost?.toFixed(2)}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Warnings / Optimizations */}
-                      {explainResult.warnings && explainResult.warnings.length > 0 && (
-                        <div style={{
-                          padding: '12px',
-                          borderRadius: '6px',
-                          backgroundColor: 'rgba(210, 153, 34, 0.1)',
-                          border: '1px solid rgba(210, 153, 34, 0.3)',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '6px'
-                        }}>
-                          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--warning, #d29922)' }}>
-                            ⚠️ PERFORMANCE WARNINGS DETECTED
-                          </div>
-                          {explainResult.warnings.map((w: string, i: number) => (
-                            <div key={i} style={{ fontSize: '12px', color: 'var(--text-primary)' }}>
-                              • {w}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Raw Plan JSON */}
-                      <div style={{
-                        padding: '12px',
-                        borderRadius: '6px',
-                        backgroundColor: 'var(--bg-card)',
-                        border: '1px solid var(--border-color)'
-                      }}>
-                        <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '6px' }}>
-                          RAW EXPLAIN PLAN JSON
-                        </div>
-                        <pre style={{
-                          padding: '10px',
-                          backgroundColor: 'var(--bg-main)',
-                          borderRadius: '4px',
-                          border: '1px solid var(--border-color)',
-                          fontSize: '11px',
-                          fontFamily: 'monospace',
-                          margin: 0,
-                          overflow: 'auto',
-                          maxHeight: '160px'
-                        }}>
-                          {JSON.stringify(explainResult.plan_raw || {}, null, 2)}
-                        </pre>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Sub-Tab 4: Connection Manager */}
-              {dbSubTab === 'connections' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '12px', flex: 1, minHeight: 0 }}>
-                  {/* Add Connection Form */}
-                  <form
-                    onSubmit={handleCreateDBConnection}
-                    style={{
-                      padding: '14px',
-                      borderRadius: '6px',
-                      backgroundColor: 'var(--bg-card)',
-                      border: '1px solid var(--border-color)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '10px'
-                    }}
-                  >
-                    <div style={{ fontSize: '13px', fontWeight: 600 }}>Register Connection</div>
-                    <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: 0 }}>
-                      Read-only database connections for safe query plan introspection and schema audits.
-                    </p>
-
-                    <div>
-                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                        CONNECTION ALIAS
-                      </label>
-                      <input
-                        type="text"
-                        value={newDbConnName}
-                        onChange={(e) => setNewDbConnName(e.target.value)}
-                        placeholder="e.g. mysql_master"
-                        style={{
-                          width: '100%',
-                          padding: '6px',
-                          borderRadius: '4px',
-                          border: '1px solid var(--border-color)',
-                          backgroundColor: 'var(--bg-main)',
-                          color: 'var(--text-primary)',
-                          fontSize: '12px'
-                        }}
-                      />
-                    </div>
-
-                    <div>
-                      <label style={{ fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>
-                        DRIVER
-                      </label>
-                      <select
-                        value={newDbConnDriver}
-                        onChange={(e) => setNewDbConnDriver(e.target.value)}
-                        style={{
-                          width: '100%',
-                          padding: '6px',
-                          borderRadius: '4px',
-                          border: '1px solid var(--border-color)',
-                          backgroundColor: 'var(--bg-main)',
-                          color: 'var(--text-primary)',
-                          fontSize: '12px'
-                        }}
-                      >
-                        <option value="mysql">MySQL</option>
-                        <option value="postgres">PostgreSQL</option>
-                        <option value="sqlite">SQLite</option>
-                      </select>
-                    </div>
-
-                    <div style={{
-                      padding: '6px 10px',
-                      borderRadius: '4px',
-                      backgroundColor: 'rgba(63, 185, 80, 0.1)',
-                      border: '1px solid rgba(63, 185, 80, 0.2)',
-                      fontSize: '11px',
-                      color: 'var(--success)'
-                    }}>
-                      🔒 Enforced Read-Only Mode (Mutations Blocked)
-                    </div>
-
-                    <button
-                      type="submit"
-                      style={{
-                        padding: '8px',
-                        backgroundColor: 'var(--accent)',
-                        color: '#fff',
-                        border: 'none',
-                        borderRadius: '4px',
-                        fontSize: '12px',
-                        fontWeight: 600,
-                        cursor: 'pointer'
-                      }}
-                    >
-                      ➕ Save Connection
-                    </button>
-                  </form>
-
-                  {/* Connections List */}
-                  <div style={{
-                    backgroundColor: 'var(--bg-card)',
-                    borderRadius: '6px',
-                    border: '1px solid var(--border-color)',
-                    overflow: 'hidden',
-                    display: 'flex',
-                    flexDirection: 'column'
-                  }}>
-                    <div style={{
-                      padding: '10px 14px',
-                      borderBottom: '1px solid var(--border-color)',
-                      fontSize: '12px',
-                      fontWeight: 600
-                    }}>
-                      CONFIGURED CONNECTIONS ({dbConnections.length})
-                    </div>
-
-                    <div style={{ flex: 1, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      {dbConnections.length === 0 ? (
-                        <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '12px' }}>
-                          No database connections configured yet.
-                        </div>
-                      ) : (
-                        dbConnections.map((conn) => (
-                          <div
-                            key={conn.id}
-                            style={{
-                              padding: '10px 14px',
-                              borderRadius: '6px',
-                              backgroundColor: 'var(--bg-main)',
-                              border: '1px solid var(--border-color)',
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center'
-                            }}
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                              <span style={{
-                                fontSize: '10px',
-                                fontWeight: 700,
-                                padding: '2px 6px',
-                                borderRadius: '3px',
-                                backgroundColor: 'var(--accent)',
-                                color: '#fff',
-                                textTransform: 'uppercase'
-                              }}>
-                                {conn.driver}
-                              </span>
-                              <span style={{ fontSize: '13px', fontWeight: 600 }}>{conn.name}</span>
-                              <span style={{ fontSize: '11px', color: 'var(--success)' }}>✔ Read-Only</span>
-                            </div>
-
-                            <button
-                              onClick={() => handleDeleteDBConnection(conn.id)}
-                              style={{
-                                background: 'none',
-                                border: 'none',
-                                color: 'var(--danger)',
-                                fontSize: '12px',
-                                cursor: 'pointer'
-                              }}
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
+            <ErrorBoundary fallbackTitle="Database Studio Encountered an Error">
+              <DatabaseStudioView
+                selectedProjectId={selectedProjectId}
+                activeProject={activeProject}
+                onNavigateToTrace={(_traceId) => {
+                  setActiveTab('traces');
+                }}
+              />
+            </ErrorBoundary>
           )}
 
           {activeTab === 'logs' && (
@@ -3200,22 +2732,47 @@ export function App() {
                               </div>
                             </td>
                             <td style={{ padding: '8px 12px', textAlign: 'right' }}>
-                              <button
-                                onClick={() => handleTestRouteInApiStudio(r.method, r.uri)}
-                                title="Open this endpoint in API Studio to test requests"
-                                style={{
-                                  padding: '4px 8px',
-                                  backgroundColor: 'rgba(88, 166, 255, 0.15)',
-                                  color: 'var(--accent)',
-                                  border: '1px solid var(--accent)',
-                                  borderRadius: '4px',
-                                  fontSize: '11px',
-                                  fontWeight: 600,
-                                  cursor: 'pointer'
-                                }}
-                              >
-                                ⚡ Test in API Studio
-                              </button>
+                              <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+                                {r.method.includes('GET') && (
+                                  <button
+                                    onClick={() => {
+                                      const base = (activeProject?.app_url || 'http://localhost:8084').replace(/\/+$/, '');
+                                      const full = r.uri === '/' ? base : `${base}/${r.uri.replace(/^\/+/, '')}`;
+                                      setUrl(full);
+                                      setActiveTab('inspector');
+                                    }}
+                                    title="Open and inspect live page in Built-in Web Inspector"
+                                    style={{
+                                      padding: '4px 8px',
+                                      backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                                      color: 'var(--accent)',
+                                      border: '1px solid var(--accent)',
+                                      borderRadius: '4px',
+                                      fontSize: '11px',
+                                      fontWeight: 600,
+                                      cursor: 'pointer'
+                                    }}
+                                  >
+                                    🌐 Inspect
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => handleTestRouteInApiStudio(r.method, r.uri)}
+                                  title="Open this endpoint in API Studio to test requests"
+                                  style={{
+                                    padding: '4px 8px',
+                                    backgroundColor: 'rgba(88, 166, 255, 0.15)',
+                                    color: 'var(--accent)',
+                                    border: '1px solid var(--accent)',
+                                    borderRadius: '4px',
+                                    fontSize: '11px',
+                                    fontWeight: 600,
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  ⚡ API Test
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -6420,6 +5977,14 @@ window.addEventListener('error', (e) => {
               </div>
             </div>
           )}
+
+          {activeTab === 'qa' && (
+            <QAStudioView activeProject={activeProject} projects={projects} />
+          )}
+
+          {activeTab === 'monitor' && (
+            <LiveMonitorView activeProject={activeProject} />
+          )}
         </main>
       </div>
 
@@ -6688,7 +6253,7 @@ window.addEventListener('error', (e) => {
                 <span>↵ select</span>
                 <span>esc dismiss</span>
               </div>
-              <span>PHP Debug Studio by zoventra</span>
+              <span>PHP Debug Studio by brixel</span>
             </div>
           </div>
         </div>

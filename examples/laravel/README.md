@@ -5,7 +5,7 @@ This directory demonstrates how **PHP Debug Studio** integrates with a Laravel 1
 ## 1. Quick Setup
 
 ```bash
-composer require --dev zoventra/php-debug-studio-laravel
+composer require --dev brixel/php-debug-studio-laravel
 php artisan debug-studio:install
 ```
 

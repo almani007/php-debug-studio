@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio;
+namespace Brixel\DebugStudio;
 
-use Zoventra\DebugStudio\Contracts\CollectorInterface;
-use Zoventra\DebugStudio\Contracts\SanitizerInterface;
-use Zoventra\DebugStudio\Contracts\TransportInterface;
-use Zoventra\DebugStudio\Collectors\ErrorCollector;
-use Zoventra\DebugStudio\Transports\HttpTransport;
+use Brixel\DebugStudio\Contracts\CollectorInterface;
+use Brixel\DebugStudio\Contracts\SanitizerInterface;
+use Brixel\DebugStudio\Contracts\TransportInterface;
+use Brixel\DebugStudio\Collectors\ErrorCollector;
+use Brixel\DebugStudio\Transports\HttpTransport;
 
 class DebugStudio
 {

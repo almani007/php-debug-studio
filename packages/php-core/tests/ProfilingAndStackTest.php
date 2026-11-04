@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio\Tests;
+namespace Brixel\DebugStudio\Tests;
 
 use Exception;
 use PHPUnit\Framework\TestCase;
-use Zoventra\DebugStudio\Collectors\StackNormalizer;
-use Zoventra\DebugStudio\Profiling\MemorySampler;
+use Brixel\DebugStudio\Collectors\StackNormalizer;
+use Brixel\DebugStudio\Profiling\MemorySampler;
 
 class ProfilingAndStackTest extends TestCase
 {

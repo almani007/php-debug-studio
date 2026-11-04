@@ -9,7 +9,13 @@ import { scanProjectSecurity } from './security-scan';
 import { listFailedJobs, retryFailedJob } from './queue-diagnostics';
 import { explainErrorCli, optimizeQueryCli } from './advisor';
 import { simulateWebhookCli } from './webhook';
-import { scanDatabaseCli } from './database';
+import {
+  scanDatabaseCli,
+  executeDatabaseQueryCli,
+  introspectSchemaCli,
+  testConnectionCli,
+  explainQueryCli,
+} from './database';
 
 export async function cli(args: string[]): Promise<number> {
   const command = args[0];
@@ -128,6 +134,134 @@ export async function cli(args: string[]): Promise<number> {
 
   if (command === 'db') {
     const subCmd = args[1];
+
+    if (subCmd === 'query') {
+      const sqlQuery = args[2];
+      if (!sqlQuery) {
+        console.error('Usage: debug-studio db query "<SQL>" [--conn <conn-id>] [--limit <number>]');
+        return 1;
+      }
+      let connId = 'default';
+      let limit = 50;
+      for (let i = 3; i < args.length; i++) {
+        if (args[i] === '--conn' && args[i + 1]) connId = args[++i];
+        if (args[i] === '--limit' && args[i + 1]) limit = parseInt(args[++i], 10);
+      }
+
+      console.log(`Executing safe read-only SQL on connection: \x1b[36m${connId}\x1b[0m...`);
+      try {
+        const res = await executeDatabaseQueryCli(sqlQuery, connId, limit);
+        console.log(`\x1b[32m✔ Returned ${res.row_count} row(s) in ${res.duration_ms.toFixed(2)} ms (Read-Only: ${res.readonly})\x1b[0m`);
+        if (res.rows.length > 0) {
+          console.table(res.rows);
+        } else {
+          console.log('  (Empty result set)');
+        }
+        return 0;
+      } catch (e: any) {
+        console.error(`\x1b[31m✖ Query Failed:\x1b[0m ${e.message}`);
+        return 1;
+      }
+    }
+
+    if (subCmd === 'explain') {
+      const sqlQuery = args[2];
+      if (!sqlQuery) {
+        console.error('Usage: debug-studio db explain "<SQL>" [--driver <mysql|postgres|sqlite>]');
+        return 1;
+      }
+      let driver = 'mysql';
+      for (let i = 3; i < args.length; i++) {
+        if (args[i] === '--driver' && args[i + 1]) driver = args[++i];
+      }
+
+      console.log(`Analyzing SQL Execution Plan (\x1b[36m${driver.toUpperCase()}\x1b[0m)...`);
+      try {
+        const plan = await explainQueryCli(sqlQuery, driver);
+        console.log(`\n\x1b[1mPlan Summary:\x1b[0m ${plan.summary}`);
+        console.log(`  Access Type:      \x1b[33m${plan.plan_type}\x1b[0m`);
+        console.log(`  Index / Key Used: \x1b[36m${plan.key_used}\x1b[0m`);
+        console.log(`  Estimated Rows:   ${plan.rows_examined.toLocaleString()}`);
+        console.log(`  Cost Score:       ${plan.cost.toFixed(2)}`);
+
+        if (plan.antipatterns && plan.antipatterns.length > 0) {
+          console.log(`\n\x1b[33m⚠ Detected Performance Antipatterns (${plan.antipatterns.length}):\x1b[0m`);
+          for (const ap of plan.antipatterns) {
+            console.log(`  • [\x1b[31m${ap.severity.toUpperCase()}\x1b[0m] \x1b[1m${ap.title}\x1b[0m`);
+            console.log(`    ${ap.description}`);
+            console.log(`    \x1b[32mRecommendation:\x1b[0m ${ap.recommendation}\n`);
+          }
+        }
+
+        if (plan.proposed_index_sql) {
+          console.log(`\x1b[32m✔ Suggested Index SQL:\x1b[0m`);
+          console.log(`  ${plan.proposed_index_sql}\n`);
+        }
+
+        if (plan.proposed_migration_php) {
+          console.log(`\x1b[36m✔ Generated Laravel Migration Snippet:\x1b[0m`);
+          console.log(plan.proposed_migration_php.split('\n').map(l => '  ' + l).join('\n'));
+        }
+
+        return 0;
+      } catch (e: any) {
+        console.error(`\x1b[31m✖ Explain Failed:\x1b[0m ${e.message}`);
+        return 1;
+      }
+    }
+
+    if (subCmd === 'schema') {
+      let connId = args[2] || 'default';
+      console.log(`Introspecting schema for connection: \x1b[36m${connId}\x1b[0m...`);
+      try {
+        const schema = await introspectSchemaCli(connId);
+        console.log(`\x1b[32m✔ Introspected ${schema.total_tables} table(s) [Driver: ${schema.driver}]\x1b[0m\n`);
+        for (const tbl of schema.tables) {
+          console.log(`\x1b[1m📁 Table: ${tbl.name}\x1b[0m (~${tbl.estimated_rows} rows, ${tbl.column_count} columns)`);
+          const colSummary = tbl.columns.map(c => `${c.name} (${c.type}${c.is_primary_key ? ', PK' : ''})`).join(', ');
+          console.log(`   Columns: ${colSummary}`);
+          if (tbl.indexes.length > 0) {
+            const idxSummary = tbl.indexes.map(i => `${i.name} [${i.columns.join(',')}]${i.unique ? ' (UNIQUE)' : ''}`).join(', ');
+            console.log(`   Indexes: ${idxSummary}`);
+          }
+          if (tbl.warnings && tbl.warnings.length > 0) {
+            for (const w of tbl.warnings) {
+              console.log(`   \x1b[33m⚠ Warning:\x1b[0m ${w}`);
+            }
+          }
+          console.log('');
+        }
+        return 0;
+      } catch (e: any) {
+        console.error(`\x1b[31m✖ Schema Introspection Failed:\x1b[0m ${e.message}`);
+        return 1;
+      }
+    }
+
+    if (subCmd === 'test') {
+      const connId = args[2] || 'default';
+      console.log(`Testing connectivity for connection: \x1b[36m${connId}\x1b[0m...`);
+      try {
+        const res = await testConnectionCli(connId);
+        if (res.success) {
+          console.log(`\x1b[32m✔ Connection Healthy!\x1b[0m`);
+          console.log(`  Driver:       ${res.driver}`);
+          console.log(`  Version:      ${res.version}`);
+          console.log(`  Latency:      ${res.latency_ms.toFixed(2)} ms`);
+          console.log(`  Tables Count: ${res.tables_count}`);
+          console.log(`  Database Size: ${(res.database_size_bytes / 1024).toFixed(1)} KB`);
+          console.log(`  Policy:       ${res.readonly ? 'Read-Only (Mutations Blocked)' : 'Read-Write'}`);
+          return 0;
+        } else {
+          console.error(`\x1b[31m✖ Connection Unhealthy:\x1b[0m ${res.message}`);
+          return 1;
+        }
+      } catch (e: any) {
+        console.error(`\x1b[31m✖ Test Failed:\x1b[0m ${e.message}`);
+        return 1;
+      }
+    }
+
     if (subCmd === 'scan') {
       const proj = args[2] || 'default';
       console.log(`Fetching database performance findings for project: ${proj}...`);
@@ -140,7 +274,8 @@ export async function cli(args: string[]): Promise<number> {
         return 1;
       }
     }
-    console.error('Usage: debug-studio db scan [project-id]');
+
+    console.error('Usage: debug-studio db <query|explain|schema|test|scan> [options]');
     return 1;
   }
 
@@ -187,7 +322,7 @@ export async function cli(args: string[]): Promise<number> {
 
   const collectionIndex = args.indexOf('run');
   if (collectionIndex === -1 || !args[collectionIndex + 1]) {
-    console.error('PHP Debug Studio CLI (by zoventra)');
+    console.error('PHP Debug Studio CLI (by brixel)');
     console.error('Usage:');
     console.error('  debug-studio run <collection.json> [--env <env.json>] [--report-junit <report.xml>]');
     console.error('  debug-studio import <spec.json> [--type openapi|postman] --out <collection.json>');

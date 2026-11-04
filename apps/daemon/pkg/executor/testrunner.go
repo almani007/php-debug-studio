@@ -3,7 +3,6 @@ package executor
 import (
 	"bytes"
 	"os/exec"
-	"path/filepath"
 	"time"
 )
 
@@ -25,30 +24,32 @@ type TestRunResponse struct {
 func RunPHPTests(req TestRunRequest) *TestRunResponse {
 	start := time.Now()
 
-	phpBin := req.PhpBinaryPath
-	if phpBin == "" {
-		phpBin = "php"
-	}
-
 	runner := req.Runner
 	if runner == "" {
 		runner = "phpunit"
 	}
 
-	executable := filepath.Join(req.ProjectPath, "vendor", "bin", runner)
-	args := []string{executable, "--testdox"}
+	args := []string{runner, "--testdox"}
 	if req.Filter != "" {
 		args = append(args, "--filter", req.Filter)
 	}
 
-	cmd := exec.Command(phpBin, args...)
-	cmd.Dir = req.ProjectPath
+	cmd, err := ResolveCommand(req.ProjectPath, req.PhpBinaryPath, "", "", "test", args)
+	if err != nil {
+		return &TestRunResponse{
+			Runner:     runner,
+			ExitCode:   1,
+			Output:     "Execution failed: " + err.Error(),
+			Passed:     false,
+			DurationMs: time.Since(start).Milliseconds(),
+		}
+	}
 
 	var combined bytes.Buffer
 	cmd.Stdout = &combined
 	cmd.Stderr = &combined
 
-	err := cmd.Run()
+	err = cmd.Run()
 	duration := time.Since(start).Milliseconds()
 
 	exitCode := 0

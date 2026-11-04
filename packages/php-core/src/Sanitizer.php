@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio;
+namespace Brixel\DebugStudio;
 
-use Zoventra\DebugStudio\Contracts\SanitizerInterface;
+use Brixel\DebugStudio\Contracts\SanitizerInterface;
 
 class Sanitizer implements SanitizerInterface
 {

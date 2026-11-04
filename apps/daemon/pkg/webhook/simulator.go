@@ -64,7 +64,7 @@ func GenerateSimulatedWebhook(provider, secret string) *SimulatedEvent {
 			"ref": "refs/heads/main",
 			"repository": {
 				"name": "php-debug-studio",
-				"full_name": "zoventra/php-debug-studio"
+				"full_name": "brixel/php-debug-studio"
 			},
 			"pusher": {
 				"name": "developer"

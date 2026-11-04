@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio\Laravel;
+namespace Brixel\DebugStudio\Laravel;
 
 use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Database\Events\QueryExecuted;
@@ -11,10 +11,10 @@ use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\ServiceProvider;
-use Zoventra\DebugStudio\DebugStudio;
-use Zoventra\DebugStudio\Laravel\Commands\DoctorCommand;
-use Zoventra\DebugStudio\Laravel\Commands\InstallCommand;
-use Zoventra\DebugStudio\Laravel\Http\Middleware\DebugStudioMiddleware;
+use Brixel\DebugStudio\DebugStudio;
+use Brixel\DebugStudio\Laravel\Commands\DoctorCommand;
+use Brixel\DebugStudio\Laravel\Commands\InstallCommand;
+use Brixel\DebugStudio\Laravel\Http\Middleware\DebugStudioMiddleware;
 
 class DebugStudioServiceProvider extends ServiceProvider
 {
@@ -66,7 +66,7 @@ class DebugStudioServiceProvider extends ServiceProvider
         $this->registerQueueListeners();
 
         // Register Cache event listeners
-        $cacheCollector = new \Zoventra\DebugStudio\Laravel\Collectors\CacheEventCollector();
+        $cacheCollector = new \Brixel\DebugStudio\Laravel\Collectors\CacheEventCollector();
         $cacheCollector->register($this->app['events']);
     }
 

@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio;
+namespace Brixel\DebugStudio;
 
-use Zoventra\DebugStudio\Contracts\SpanInterface;
+use Brixel\DebugStudio\Contracts\SpanInterface;
 
 class Span implements SpanInterface
 {

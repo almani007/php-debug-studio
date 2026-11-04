@@ -5,25 +5,30 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"zoventra/php-debug-studio/daemon/pkg/ai"
-	"zoventra/php-debug-studio/daemon/pkg/auth"
-	"zoventra/php-debug-studio/daemon/pkg/dbgp"
-	"zoventra/php-debug-studio/daemon/pkg/diagnostics"
-	"zoventra/php-debug-studio/daemon/pkg/executor"
-	"zoventra/php-debug-studio/daemon/pkg/laravel"
-	"zoventra/php-debug-studio/daemon/pkg/mock"
-	"zoventra/php-debug-studio/daemon/pkg/runtimes"
-	"zoventra/php-debug-studio/daemon/pkg/store"
-	"zoventra/php-debug-studio/daemon/pkg/webhook"
-	"zoventra/php-debug-studio/daemon/pkg/ws"
+	"brixel/php-debug-studio/daemon/pkg/ai"
+	"brixel/php-debug-studio/daemon/pkg/auth"
+	"brixel/php-debug-studio/daemon/pkg/dbgp"
+	"brixel/php-debug-studio/daemon/pkg/diagnostics"
+	"brixel/php-debug-studio/daemon/pkg/executor"
+	"brixel/php-debug-studio/daemon/pkg/laravel"
+	"brixel/php-debug-studio/daemon/pkg/mock"
+	"brixel/php-debug-studio/daemon/pkg/monitor"
+	"brixel/php-debug-studio/daemon/pkg/qa"
+	"brixel/php-debug-studio/daemon/pkg/runtimes"
+	"brixel/php-debug-studio/daemon/pkg/store"
+	"brixel/php-debug-studio/daemon/pkg/webhook"
+	"brixel/php-debug-studio/daemon/pkg/ws"
 )
 
 type Server struct {
@@ -167,6 +172,18 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/db/findings", s.handleDBFindings)
 	s.mux.HandleFunc("/v1/db/recommendations/", s.handleDBRecommendationDetail)
 	s.mux.HandleFunc("/v1/db/explain", s.handleDBExplain)
+	s.mux.HandleFunc("/v1/db/query", s.handleDBQuery)
+	s.mux.HandleFunc("/v1/db/schema", s.handleDBSchema)
+	s.mux.HandleFunc("/v1/db/connections/test", s.handleDBConnectionTest)
+	s.mux.HandleFunc("/v1/db/table/data", s.handleDBTableData)
+	s.mux.HandleFunc("/v1/db/table/row", s.handleDBTableRow)
+	s.mux.HandleFunc("/v1/db/table/truncate", s.handleDBTableTruncate)
+	s.mux.HandleFunc("/v1/db/table/drop", s.handleDBTableDrop)
+	s.mux.HandleFunc("/v1/db/table/ddl", s.handleDBTableDDL)
+	s.mux.HandleFunc("/v1/db/relations", s.handleDBRelations)
+	s.mux.HandleFunc("/v1/db/stats", s.handleDBStats)
+	s.mux.HandleFunc("/v1/db/optimize", s.handleDBOptimize)
+	s.mux.HandleFunc("/v1/db/processes", s.handleDBProcesses)
 
 	// Breakpoint Management (Module 10)
 	s.mux.HandleFunc("/v1/debug/breakpoints", s.handleBreakpoints)
@@ -200,6 +217,44 @@ func (s *Server) registerRoutes() {
 
 	// Laravel Route Introspector (Module 12)
 	s.mux.HandleFunc("/v1/laravel/routes", s.handleLaravelRoutes)
+
+	// QA Studio Engine (Smoke Crawler, Boundary Fuzzing, Concurrency Load SLA)
+	s.mux.HandleFunc("/v1/qa/smoke", s.handleQASmoke)
+	s.mux.HandleFunc("/v1/qa/fuzz", s.handleQAFuzz)
+	s.mux.HandleFunc("/v1/qa/benchmark", s.handleQABenchmark)
+
+	// Live Project Monitor & Security Guard
+	s.mux.HandleFunc("/v1/monitor/probe", s.handleMonitorProbe)
+
+	// Builtin Web Inspector & Live Browser Proxy (ChatGPT-style inspection)
+	s.mux.HandleFunc("/v1/browser/proxy", s.handleBrowserProxy)
+
+	// Web UI SPA Static Server (Module 01 Cockpit)
+	webDir := os.Getenv("DEBUG_STUDIO_WEB_DIST")
+	if webDir == "" {
+		for _, candidate := range []string{"../web/dist", "apps/web/dist", "/app/web/dist", "./web/dist"} {
+			if fi, err := os.Stat(candidate); err == nil && fi.IsDir() {
+				webDir = candidate
+				break
+			}
+		}
+	}
+	if webDir != "" {
+		fs := http.FileServer(http.Dir(webDir))
+		s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			// Don't intercept API routes
+			if strings.HasPrefix(r.URL.Path, "/v1/") || strings.HasPrefix(r.URL.Path, "/wh/") || strings.HasPrefix(r.URL.Path, "/mock/") {
+				http.NotFound(w, r)
+				return
+			}
+			targetPath := filepath.Join(webDir, filepath.Clean(r.URL.Path))
+			if fInfo, statErr := os.Stat(targetPath); statErr == nil && !fInfo.IsDir() {
+				fs.ServeHTTP(w, r)
+				return
+			}
+			http.ServeFile(w, r, filepath.Join(webDir, "index.html"))
+		})
+	}
 }
 
 func (s *Server) handleTestRuns(w http.ResponseWriter, r *http.Request) {
@@ -501,7 +556,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"status":    "healthy",
 		"version":   "1.0.0-baseline",
 		"engine":    "PHP Debug Studio Daemon",
-		"author":    "zoventra",
+		"author":    "brixel",
 		"dbgp_port": 9003,
 	}
 	s.jsonResponse(w, http.StatusOK, health, nil)
@@ -1534,6 +1589,16 @@ func (s *Server) handleDBConnectionDetail(w http.ResponseWriter, r *http.Request
 	}
 	id := parts[3]
 
+	if len(parts) >= 5 && parts[4] == "test" && r.Method == http.MethodPost {
+		res, err := s.store.TestDBConnection(store.DBConnection{ID: id})
+		if err != nil {
+			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, res, nil)
+		return
+	}
+
 	if r.Method == http.MethodDelete {
 		if err := s.store.DeleteDBConnection(id); err != nil {
 			s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DB_ERROR", Message: err.Error()})
@@ -1634,6 +1699,649 @@ func (s *Server) handleDBExplain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	analysis := store.ExplainQueryPlan(req.SQL, req.Driver)
+	analysis := store.ExplainQueryPlanEnhanced(req.SQL, req.Driver)
 	s.jsonResponse(w, http.StatusOK, analysis, nil)
+}
+
+func (s *Server) handleDBQuery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		ConnectionID  string `json:"connection_id"`
+		SQL           string `json:"sql"`
+		Limit         int    `json:"limit"`
+		AllowMutation bool   `json:"allow_mutation"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	if strings.TrimSpace(req.SQL) == "" {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "VALIDATION_FAILED", Message: "sql statement cannot be empty"})
+		return
+	}
+
+	result, err := s.store.ExecuteSafeQuery(req.ConnectionID, req.SQL, req.Limit, req.AllowMutation)
+	if err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "QUERY_EXECUTION_FAILED", Message: err.Error()})
+		return
+	}
+
+	s.hub.Broadcast("db_query_executed", "system", map[string]interface{}{
+		"connection_id": req.ConnectionID,
+		"rows_returned": result.RowCount,
+		"duration_ms":   result.DurationMs,
+		"affected_rows": result.AffectedRows,
+	})
+
+	s.jsonResponse(w, http.StatusOK, result, nil)
+}
+
+func (s *Server) handleDBSchema(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	connID := r.URL.Query().Get("connection_id")
+	schemaInfo, err := s.store.IntrospectSchema(connID)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "SCHEMA_INTROSPECTION_FAILED", Message: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, schemaInfo, nil)
+}
+
+func (s *Server) handleDBConnectionTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var conn store.DBConnection
+	if err := json.NewDecoder(r.Body).Decode(&conn); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	testResult, err := s.store.TestDBConnection(conn)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "TEST_FAILED", Message: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, testResult, nil)
+}
+
+func (s *Server) handleDBTableData(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	q := r.URL.Query()
+	connID := q.Get("connection_id")
+	table := q.Get("table")
+	if table == "" {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "VALIDATION_FAILED", Message: "table parameter is required"})
+		return
+	}
+
+	page, _ := strconv.Atoi(q.Get("page"))
+	if page <= 0 {
+		page = 1
+	}
+	pageSize, _ := strconv.Atoi(q.Get("page_size"))
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+	sortCol := q.Get("sort_col")
+	sortDir := q.Get("sort_dir")
+	filter := q.Get("filter")
+
+	data, err := s.store.GetTableData(connID, table, page, pageSize, sortCol, sortDir, filter)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "TABLE_DATA_FAILED", Message: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, data, nil)
+}
+
+func (s *Server) handleDBTableRow(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		var req struct {
+			ConnectionID string                 `json:"connection_id"`
+			Table        string                 `json:"table"`
+			Data         map[string]interface{} `json:"data"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+			return
+		}
+		insertID, err := s.store.InsertTableRow(req.ConnectionID, req.Table, req.Data)
+		if err != nil {
+			s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INSERT_FAILED", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true, "inserted_id": insertID}, nil)
+
+	case http.MethodPatch:
+		var req struct {
+			ConnectionID string                 `json:"connection_id"`
+			Table        string                 `json:"table"`
+			PKCol        string                 `json:"pk_col"`
+			PKVal        interface{}            `json:"pk_val"`
+			Updates      map[string]interface{} `json:"updates"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+			return
+		}
+		aff, err := s.store.UpdateTableRow(req.ConnectionID, req.Table, req.PKCol, req.PKVal, req.Updates)
+		if err != nil {
+			s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "UPDATE_FAILED", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true, "rows_affected": aff}, nil)
+
+	case http.MethodDelete:
+		var req struct {
+			ConnectionID string      `json:"connection_id"`
+			Table        string      `json:"table"`
+			PKCol        string      `json:"pk_col"`
+			PKVal        interface{} `json:"pk_val"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+			return
+		}
+		aff, err := s.store.DeleteTableRow(req.ConnectionID, req.Table, req.PKCol, req.PKVal)
+		if err != nil {
+			s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "DELETE_FAILED", Message: err.Error()})
+			return
+		}
+		s.jsonResponse(w, http.StatusOK, map[string]interface{}{"success": true, "rows_affected": aff}, nil)
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleDBTableTruncate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		ConnectionID string `json:"connection_id"`
+		Table        string `json:"table"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+	if err := s.store.TruncateTable(req.ConnectionID, req.Table); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "TRUNCATE_FAILED", Message: err.Error()})
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, map[string]bool{"success": true}, nil)
+}
+
+func (s *Server) handleDBTableDrop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		ConnectionID string `json:"connection_id"`
+		Table        string `json:"table"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+	if err := s.store.DropTable(req.ConnectionID, req.Table); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "DROP_FAILED", Message: err.Error()})
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, map[string]bool{"success": true}, nil)
+}
+
+func (s *Server) handleDBTableDDL(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	connID := r.URL.Query().Get("connection_id")
+	table := r.URL.Query().Get("table")
+	if table == "" {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "VALIDATION_FAILED", Message: "table parameter is required"})
+		return
+	}
+	ddl, err := s.store.GetTableDDL(connID, table)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DDL_FAILED", Message: err.Error()})
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, map[string]string{"table": table, "ddl": ddl}, nil)
+}
+
+func (s *Server) handleDBRelations(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	connID := r.URL.Query().Get("connection_id")
+	erd, err := s.store.GetDatabaseRelations(connID)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "RELATIONS_FAILED", Message: err.Error()})
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, erd, nil)
+}
+
+func (s *Server) handleDBStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	connID := r.URL.Query().Get("connection_id")
+	stats, err := s.store.GetDatabaseStats(connID)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "STATS_FAILED", Message: err.Error()})
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, stats, nil)
+}
+
+func (s *Server) handleDBOptimize(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		ConnectionID string `json:"connection_id"`
+		Table        string `json:"table"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	msg, err := s.store.OptimizeDatabase(req.ConnectionID, req.Table)
+	if err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "OPTIMIZE_FAILED", Message: err.Error()})
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, map[string]string{"message": msg}, nil)
+}
+
+func (s *Server) handleDBProcesses(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	connID := r.URL.Query().Get("connection_id")
+	procs, err := s.store.GetActiveProcesses(connID)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "PROCESSES_FAILED", Message: err.Error()})
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, procs, nil)
+}
+
+func (s *Server) handleQASmoke(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		BaseURL     string   `json:"base_url"`
+		ProjectPath string   `json:"project_path"`
+		Endpoints   []string `json:"endpoints"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	endpoints := req.Endpoints
+	if len(endpoints) == 0 && req.ProjectPath != "" {
+		if rList, err := laravel.GetRoutes(req.ProjectPath, ""); err == nil {
+			for _, r := range rList {
+				if r.Method == "GET" || strings.Contains(r.Method, "GET") {
+					endpoints = append(endpoints, r.URI)
+				}
+			}
+		}
+	}
+
+	if len(endpoints) == 0 {
+		endpoints = []string{"/api/health", "/api/v1/health", "/", "/health"}
+	}
+
+	summary := qa.RunSmokeCrawler(req.BaseURL, endpoints)
+	s.jsonResponse(w, http.StatusOK, summary, nil)
+}
+
+func (s *Server) handleQAFuzz(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		TargetURL string `json:"target_url"`
+		Method    string `json:"method"`
+		Parameter string `json:"parameter"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	if req.TargetURL == "" {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "MISSING_URL", Message: "target_url is required"})
+		return
+	}
+
+	param := req.Parameter
+	if param == "" {
+		param = "query"
+	}
+
+	report := qa.RunFuzzTesting(req.TargetURL, req.Method, param)
+	s.jsonResponse(w, http.StatusOK, report, nil)
+}
+
+func (s *Server) handleQABenchmark(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		TargetURL     string `json:"target_url"`
+		Method        string `json:"method"`
+		Concurrency   int    `json:"concurrency"`
+		TotalRequests int    `json:"total_requests"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	if req.TargetURL == "" {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "MISSING_URL", Message: "target_url is required"})
+		return
+	}
+
+	report := qa.RunBenchmark(req.TargetURL, req.Method, req.Concurrency, req.TotalRequests)
+	s.jsonResponse(w, http.StatusOK, report, nil)
+}
+
+func (s *Server) handleMonitorProbe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	if req.URL == "" {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "MISSING_URL", Message: "url is required"})
+		return
+	}
+
+	result, err := monitor.ProbeLiveTarget(req.URL)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "PROBE_FAILED", Message: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, result, nil)
+}
+
+func (s *Server) handleBrowserProxy(w http.ResponseWriter, r *http.Request) {
+	targetURL := r.URL.Query().Get("url")
+	if targetURL == "" {
+		http.Error(w, "Query parameter 'url' is required", http.StatusBadRequest)
+		return
+	}
+
+	parsedTarget, err := url.Parse(targetURL)
+	if err != nil || (parsedTarget.Scheme != "http" && parsedTarget.Scheme != "https") {
+		http.Error(w, "Invalid target URL scheme", http.StatusBadRequest)
+		return
+	}
+
+	proxyReq, err := http.NewRequest(r.Method, targetURL, r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	for k, vv := range r.Header {
+		if strings.EqualFold(k, "Host") || strings.EqualFold(k, "Referer") || strings.EqualFold(k, "Origin") {
+			continue
+		}
+		for _, v := range vv {
+			proxyReq.Header.Add(k, v)
+		}
+	}
+	proxyReq.Header.Set("User-Agent", "PHPDebugStudio-WebInspector/1.0 (Headless)")
+
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return nil
+		},
+	}
+
+	resp, err := client.Do(proxyReq)
+	if err != nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusBadGateway)
+		fmt.Fprintf(w, "<div style=\"font-family:system-ui,-apple-system,sans-serif;padding:32px;background:#0d1117;color:#f85149;min-height:100vh;\"><h2 style=\"margin-bottom:12px;\">⚠️ Unable to connect to %s</h2><p style=\"color:#f0f6fc;margin-bottom:16px;\">%s</p><div style=\"background:#161b22;border:1px solid #30363d;padding:16px;border-radius:8px;color:#8b949e;\"><strong>Troubleshooting Tip:</strong> Ensure your local web server or Docker container (e.g. <code>localhost:8084</code> for GroceryOS, <code>localhost:8087</code> for Brixel POS) is running.</div></div>", targetURL, err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	for k, vv := range resp.Header {
+		if strings.EqualFold(k, "X-Frame-Options") || strings.EqualFold(k, "Content-Security-Policy") {
+			continue
+		}
+		for _, v := range vv {
+			w.Header().Add(k, v)
+		}
+	}
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Del("Content-Security-Policy")
+	w.Header().Del("X-Frame-Options")
+
+	contentType := resp.Header.Get("Content-Type")
+	if strings.Contains(contentType, "text/html") {
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		baseTag := fmt.Sprintf("<base href=\"%s://%s/\">", parsedTarget.Scheme, parsedTarget.Host)
+		inspectorScript := `<script id="__php_debug_studio_inspector_script__">
+(function() {
+  const origLog = console.log, origWarn = console.warn, origError = console.error, origInfo = console.info;
+  function sendConsole(type, args) {
+    try {
+      const msg = Array.from(args).map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+      window.parent.postMessage({ type: 'PDS_BROWSER_CONSOLE', severity: type, message: msg, timestamp: new Date().toISOString() }, '*');
+    } catch(e){}
+  }
+  console.log = function(...a) { origLog.apply(console, a); sendConsole('log', a); };
+  console.warn = function(...a) { origWarn.apply(console, a); sendConsole('warning', a); };
+  console.error = function(...a) { origError.apply(console, a); sendConsole('error', a); };
+  console.info = function(...a) { origInfo.apply(console, a); sendConsole('info', a); };
+
+  window.addEventListener('error', function(e) {
+    window.parent.postMessage({
+      type: 'PDS_BROWSER_ERROR',
+      message: e.message || 'JavaScript Error',
+      filename: e.filename,
+      lineno: e.lineno,
+      colno: e.colno,
+      stack: e.error && e.error.stack ? e.error.stack : '',
+      timestamp: new Date().toISOString()
+    }, '*');
+  });
+
+  const origFetch = window.fetch;
+  if (origFetch) {
+    window.fetch = async function(...args) {
+      const start = performance.now();
+      const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
+      const method = (args[1] && args[1].method) || 'GET';
+      try {
+        const res = await origFetch.apply(this, args);
+        const duration = Math.round(performance.now() - start);
+        window.parent.postMessage({
+          type: 'PDS_BROWSER_NETWORK',
+          method: method,
+          url: url,
+          status: res.status,
+          duration: duration,
+          type_group: 'fetch',
+          timestamp: new Date().toISOString()
+        }, '*');
+        return res;
+      } catch(err) {
+        window.parent.postMessage({
+          type: 'PDS_BROWSER_NETWORK',
+          method: method,
+          url: url,
+          status: 0,
+          error: String(err),
+          duration: Math.round(performance.now() - start),
+          timestamp: new Date().toISOString()
+        }, '*');
+        throw err;
+      }
+    };
+  }
+
+  let inspectMode = false;
+  let overlay = document.createElement('div');
+  overlay.id = '__pds_inspect_overlay';
+  overlay.style.cssText = 'position:fixed;pointer-events:none;z-index:999999;border:2px solid #58a6ff;background:rgba(88,166,255,0.18);transition:all 0.05s ease;display:none;';
+  if (document.documentElement) document.documentElement.appendChild(overlay);
+
+  window.addEventListener('message', function(ev) {
+    if (!ev.data) return;
+    if (ev.data.type === 'PDS_SET_INSPECT_MODE') {
+      inspectMode = !!ev.data.enabled;
+      if (!inspectMode && overlay) overlay.style.display = 'none';
+    } else if (ev.data.type === 'PDS_INJECT_CSS') {
+      let st = document.getElementById('__pds_custom_styles');
+      if (!st) {
+        st = document.createElement('style');
+        st.id = '__pds_custom_styles';
+        document.head.appendChild(st);
+      }
+      st.textContent = ev.data.css;
+    }
+  });
+
+  document.addEventListener('mouseover', function(e) {
+    if (!inspectMode) return;
+    const el = e.target;
+    if (el === overlay) return;
+    const rect = el.getBoundingClientRect();
+    overlay.style.display = 'block';
+    overlay.style.top = rect.top + 'px';
+    overlay.style.left = rect.left + 'px';
+    overlay.style.width = rect.width + 'px';
+    overlay.style.height = rect.height + 'px';
+  }, true);
+
+  document.addEventListener('click', function(e) {
+    if (!inspectMode) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const el = e.target;
+    const cs = window.getComputedStyle(el);
+    const styles = {
+      display: cs.display,
+      position: cs.position,
+      width: cs.width,
+      height: cs.height,
+      color: cs.color,
+      backgroundColor: cs.backgroundColor,
+      fontSize: cs.fontSize,
+      fontFamily: cs.fontFamily,
+      fontWeight: cs.fontWeight,
+      margin: cs.margin,
+      padding: cs.padding,
+      border: cs.border,
+      borderRadius: cs.borderRadius,
+      boxShadow: cs.boxShadow,
+      lineHeight: cs.lineHeight,
+      textAlign: cs.textAlign
+    };
+    window.parent.postMessage({
+      type: 'PDS_ELEMENT_SELECTED',
+      tagName: el.tagName.toLowerCase(),
+      id: el.id,
+      className: el.className,
+      outerHTML: el.outerHTML ? el.outerHTML.slice(0, 1500) : '',
+      textContent: el.textContent ? el.textContent.slice(0, 300) : '',
+      styles: styles,
+      rect: {
+        width: Math.round(el.offsetWidth),
+        height: Math.round(el.offsetHeight)
+      }
+    }, '*');
+  }, true);
+
+  window.addEventListener('DOMContentLoaded', function() {
+    window.parent.postMessage({
+      type: 'PDS_PAGE_LOADED',
+      url: window.location.href,
+      title: document.title,
+      domElementsCount: document.querySelectorAll('*').length,
+      timestamp: new Date().toISOString()
+    }, '*');
+  });
+})();
+</script>`
+
+		content := string(bodyBytes)
+		if strings.Contains(content, "<head>") {
+			content = strings.Replace(content, "<head>", "<head>"+baseTag, 1)
+		} else {
+			content = baseTag + content
+		}
+
+		if strings.Contains(content, "</body>") {
+			content = strings.Replace(content, "</body>", inspectorScript+"</body>", 1)
+		} else {
+			content = content + inspectorScript
+		}
+
+		w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write([]byte(content))
+		return
+	}
+
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }

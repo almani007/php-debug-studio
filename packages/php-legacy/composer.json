@@ -1,12 +1,12 @@
 {
-    "name": "zoventra/php-debug-studio-legacy",
-    "description": "Legacy PHP 7.4 - 8.1 compatibility adapter for PHP Debug Studio by zoventra",
+    "name": "brixel/php-debug-studio-legacy",
+    "description": "Legacy PHP 7.4 - 8.1 compatibility adapter for PHP Debug Studio by brixel",
     "type": "library",
     "license": "MIT",
     "authors": [
         {
-            "name": "zoventra",
-            "email": "dev@zoventra.com"
+            "name": "brixel",
+            "email": "dev@brixel.com"
         }
     ],
     "require": {
@@ -14,7 +14,7 @@
     },
     "autoload": {
         "psr-4": {
-            "Zoventra\\DebugStudio\\Legacy\\": "src/"
+            "Brixel\\DebugStudio\\Legacy\\": "src/"
         }
     },
     "minimum-stability": "stable",

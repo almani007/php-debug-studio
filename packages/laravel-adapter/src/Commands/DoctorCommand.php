@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio\Laravel\Commands;
+namespace Brixel\DebugStudio\Laravel\Commands;
 
 use Illuminate\Console\Command;
 

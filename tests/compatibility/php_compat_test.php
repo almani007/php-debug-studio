@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio\Tests;
+namespace Brixel\DebugStudio\Tests;
 
 use PHPUnit\Framework\TestCase;
-use Zoventra\DebugStudio\Sanitizer;
-use Zoventra\DebugStudio\Tracer;
+use Brixel\DebugStudio\Sanitizer;
+use Brixel\DebugStudio\Tracer;
 
 class PhpCompatTest extends TestCase
 {

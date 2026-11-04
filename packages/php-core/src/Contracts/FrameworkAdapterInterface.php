@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio\Contracts;
+namespace Brixel\DebugStudio\Contracts;
 
 interface FrameworkAdapterInterface
 {

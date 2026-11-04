@@ -1,6 +1,6 @@
 # PHP Debug Studio — Product Roadmap & Milestones
 
-**Maintained by zoventra**  
+**Maintained by brixel**  
 *Architecture Baseline: Version 1.0 | 22 October 2026*
 
 ---

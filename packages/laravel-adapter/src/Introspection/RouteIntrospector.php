@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio\Laravel\Introspection;
+namespace Brixel\DebugStudio\Laravel\Introspection;
 
 use Illuminate\Routing\Route;
 use Illuminate\Routing\Router;

@@ -1,5 +1,5 @@
 {
-  "name": "@zoventra/php-debug-studio-plugin-ollama",
+  "name": "@brixel/php-debug-studio-plugin-ollama",
   "version": "1.0.0",
   "description": "Local offline AI Assistant plugin for PHP Debug Studio using Ollama",
   "main": "dist/index.js",
@@ -8,7 +8,7 @@
     "build": "tsc"
   },
   "keywords": ["php", "debug", "ollama", "ai", "plugin"],
-  "author": "zoventra",
+  "author": "brixel",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.11.0",

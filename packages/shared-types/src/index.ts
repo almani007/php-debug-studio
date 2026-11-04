@@ -1,6 +1,6 @@
 /**
  * PHP Debug Studio - Shared TypeScript Definitions
- * Maintained by zoventra
+ * Maintained by brixel
  */
 
 export interface MetaInfo {

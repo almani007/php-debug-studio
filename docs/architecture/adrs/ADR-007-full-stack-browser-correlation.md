@@ -8,7 +8,7 @@ Diagnosing full-stack web application issues often requires correlating frontend
 
 ## Decision
 Implement JavaScript Debug Studio and Browser SDK correlation (Module 23):
-1. Distribute a lightweight browser tracing package (`@zoventra/php-debug-studio-browser`) that intercepts `window.fetch` and `XMLHttpRequest`.
+1. Distribute a lightweight browser tracing package (`@brixel/php-debug-studio-browser`) that intercepts `window.fetch` and `XMLHttpRequest`.
 2. Automatically attach W3C standard `traceparent` headers (`00-{trace_id}-{span_id}-01`) to all outbound HTTP requests.
 3. The PHP Core SDK and Laravel adapter parse the incoming `traceparent` header to parent all server spans, Eloquent queries, and logs to the client-originated trace ID.
 4. Capture browser console logs, DOM errors, and call stacks via Chrome DevTools Protocol (CDP) / Node.js V8 inspector sessions.

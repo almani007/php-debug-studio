@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../../packages/php-core/vendor/autoload.php';
 
-use Zoventra\DebugStudio\DebugStudio;
+use Brixel\DebugStudio\DebugStudio;
 
 // 1. Initialize PHP Debug Studio
 DebugStudio::init([
-    'project_id' => 'sample-plain-php',
+    'project_id' => getenv('DEBUG_STUDIO_PROJECT_ID') ?: 'sample-plain-php',
     'environment_id' => 'local',
-    'endpoint' => 'http://127.0.0.1:8765',
+    'endpoint' => getenv('DEBUG_STUDIO_ENDPOINT') ?: 'http://127.0.0.1:8765',
     'collectors' => [
         'errors' => true,
         'requests' => true,

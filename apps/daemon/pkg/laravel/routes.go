@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"zoventra/php-debug-studio/daemon/pkg/executor"
+	"brixel/php-debug-studio/daemon/pkg/executor"
 )
 
 type RouteInfo struct {

@@ -1,7 +1,7 @@
 {
   "build": {
-    "beforeDevCommand": "pnpm --filter @zoventra/php-debug-studio-web dev",
-    "beforeBuildCommand": "pnpm --filter @zoventra/php-debug-studio-web build",
+    "beforeDevCommand": "pnpm --filter @brixel/php-debug-studio-web dev",
+    "beforeBuildCommand": "pnpm --filter @brixel/php-debug-studio-web build",
     "devPath": "http://localhost:3000",
     "distDir": "../../web/dist"
   },
@@ -20,7 +20,7 @@
     "bundle": {
       "active": true,
       "targets": "all",
-      "identifier": "com.zoventra.phpdebugstudio",
+      "identifier": "com.brixel.phpdebugstudio",
       "icon": [
         "icons/32x32.png",
         "icons/128x128.png",

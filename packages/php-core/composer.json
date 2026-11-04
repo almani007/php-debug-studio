@@ -1,12 +1,12 @@
 {
-    "name": "zoventra/php-debug-studio-core",
-    "description": "Framework-neutral core SDK for PHP Debug Studio by zoventra",
+    "name": "brixel/php-debug-studio-core",
+    "description": "Framework-neutral core SDK for PHP Debug Studio by brixel",
     "type": "library",
     "license": "MIT",
     "authors": [
         {
-            "name": "zoventra",
-            "email": "dev@zoventra.com"
+            "name": "brixel",
+            "email": "dev@brixel.com"
         }
     ],
     "require": {
@@ -18,12 +18,12 @@
     },
     "autoload": {
         "psr-4": {
-            "Zoventra\\DebugStudio\\": "src/"
+            "Brixel\\DebugStudio\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "Zoventra\\DebugStudio\\Tests\\": "tests/"
+            "Brixel\\DebugStudio\\Tests\\": "tests/"
         }
     },
     "minimum-stability": "stable",

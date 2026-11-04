@@ -1,6 +1,6 @@
 <?php
 
-namespace Zoventra\DebugStudio\Legacy;
+namespace Brixel\DebugStudio\Legacy;
 
 class LegacySanitizer
 {

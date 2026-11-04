@@ -4,7 +4,7 @@ set -euo pipefail
 
 echo "=================================================="
 echo "PHP Debug Studio End-to-End Smoke Test"
-echo "Maintained by zoventra"
+echo "Maintained by brixel"
 echo "=================================================="
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

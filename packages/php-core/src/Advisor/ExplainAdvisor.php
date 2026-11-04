@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio\Advisor;
+namespace Brixel\DebugStudio\Advisor;
 
 class ExplainAdvisor
 {

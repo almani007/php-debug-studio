@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio\Collectors;
+namespace Brixel\DebugStudio\Collectors;
 
 use Throwable;
-use Zoventra\DebugStudio\Contracts\CollectorInterface;
-use Zoventra\DebugStudio\DebugStudio;
+use Brixel\DebugStudio\Contracts\CollectorInterface;
+use Brixel\DebugStudio\DebugStudio;
 
 class ErrorCollector implements CollectorInterface
 {

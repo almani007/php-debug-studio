@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio\Laravel\Collectors;
+namespace Brixel\DebugStudio\Laravel\Collectors;
 
 use Illuminate\Cache\Events\CacheHit;
 use Illuminate\Cache\Events\CacheMissed;
 use Illuminate\Cache\Events\KeyForgotten;
 use Illuminate\Cache\Events\KeyWritten;
 use Illuminate\Contracts\Events\Dispatcher;
-use Zoventra\DebugStudio\DebugStudio;
+use Brixel\DebugStudio\DebugStudio;
 
 class CacheEventCollector
 {

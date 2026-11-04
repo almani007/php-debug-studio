@@ -13,7 +13,7 @@ The PHP Debug Studio team takes the security of local developer tools seriously.
 
 If you discover a potential vulnerability:
 1. **Do not** report security vulnerabilities through public GitHub issues.
-2. Please send detailed disclosures to `security@zoventra.com` (or create a private GitHub Security Advisory).
+2. Please send detailed disclosures to `security@brixel.com` (or create a private GitHub Security Advisory).
 3. Include detailed steps to reproduce, the platform/architecture, and evidence of the finding.
 4. We aim to acknowledge receipt of reports within 48 hours and coordinate release of fixes in accordance with responsible disclosure practices.
 

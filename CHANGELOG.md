@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fuzzy-search quick switcher covering all 15+ studio workspaces and debug consoles.
   - Keyboard-driven actions for security audits, AI queries, route refreshing, and webhook simulation.
   - Full WCAG 2.1 AA keyboard navigation (`↑`, `↓`, `Enter`, `Esc`, `Cmd+1..9`, `Cmd+Enter`).
-- **Headless CLI Runner (`@zoventra/php-debug-studio-cli`)**:
+- **Headless CLI Runner (`@brixel/php-debug-studio-cli`)**:
   - Headless API collection runner with variable interpolation and JUnit XML reporting for CI/CD.
   - Dedicated subcommands: `artisan`, `test`, `scan`, `queue`, `ai`, `webhook`, `db`.
 - **Tauri Desktop Shell & Distribution Packaging**:
@@ -54,4 +54,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Webhook Studio (Module 22), JavaScript Debug Studio (Module 23), and Database Debug Studio & Solution Advisor (Module 24).
 - Local daemon v1 API contracts and SQLite WAL storage schema (`docs/architecture/SCHEMA.sql`).
 - Monorepo package scaffolding for Go daemon, Tauri desktop shell, React UI, and Composer SDKs.
-- Project licensing under the MIT License by zoventra.
+- Project licensing under the MIT License by brixel.

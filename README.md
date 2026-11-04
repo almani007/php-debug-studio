@@ -11,7 +11,7 @@
 
 **Complete Software Requirements Specification & Technical Architecture**  
 *Free • Open Source • MIT License • Desktop + Browser + Composer SDK*  
-*Created and maintained by **zoventra***
+*Created and maintained by **brixel***
 
 </div>
 
@@ -158,7 +158,7 @@ php-debug-studio/
 In your Laravel project root:
 
 ```bash
-composer require --dev zoventra/php-debug-studio-laravel
+composer require --dev brixel/php-debug-studio-laravel
 ```
 
 Run the automated installer to publish configuration and verify daemon connectivity:
@@ -173,7 +173,7 @@ php artisan debug-studio:doctor
 For non-Laravel applications, include the core SDK in your bootstrap sequence:
 
 ```php
-use Zoventra\DebugStudio\DebugStudio;
+use Brixel\DebugStudio\DebugStudio;
 
 require_once __DIR__ . '/vendor/autoload.php';
 
@@ -190,7 +190,7 @@ DebugStudio::init([
 
 ### 3. CLI Automation & Headless Execution
 
-PHP Debug Studio includes a standalone CLI (`@zoventra/php-debug-studio-cli`) for headless workflows and CI/CD automation:
+PHP Debug Studio includes a standalone CLI (`@brixel/php-debug-studio-cli`) for headless workflows and CI/CD automation:
 
 ```bash
 # Run API test collection with JUnit export
@@ -266,4 +266,4 @@ We welcome community contributions, bug reports, and design feedback! Please rev
 ## 📄 License
 
 PHP Debug Studio is open-source software licensed under the **[MIT License](LICENSE)**.  
-Copyright © 2026 **zoventra**.
+Copyright © 2026 **brixel**.

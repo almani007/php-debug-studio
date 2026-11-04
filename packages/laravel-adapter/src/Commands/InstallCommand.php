@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio\Laravel\Commands;
+namespace Brixel\DebugStudio\Laravel\Commands;
 
 use Illuminate\Console\Command;
 
@@ -13,10 +13,10 @@ class InstallCommand extends Command
 
     public function handle(): int
     {
-        $this->info('Installing PHP Debug Studio Laravel integration (by zoventra)...');
+        $this->info('Installing PHP Debug Studio Laravel integration (by brixel)...');
 
         $this->call('vendor:publish', [
-            '--provider' => 'Zoventra\DebugStudio\Laravel\DebugStudioServiceProvider',
+            '--provider' => 'Brixel\DebugStudio\Laravel\DebugStudioServiceProvider',
             '--tag' => 'config',
         ]);
 

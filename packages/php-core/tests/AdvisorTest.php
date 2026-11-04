@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio\Tests;
+namespace Brixel\DebugStudio\Tests;
 
 use PHPUnit\Framework\TestCase;
-use Zoventra\DebugStudio\Advisor\NPlusOneDetector;
-use Zoventra\DebugStudio\Advisor\QueryFingerprint;
+use Brixel\DebugStudio\Advisor\NPlusOneDetector;
+use Brixel\DebugStudio\Advisor\QueryFingerprint;
 
 class AdvisorTest extends TestCase
 {

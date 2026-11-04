@@ -1,5 +1,5 @@
 {
-  "name": "@zoventra/php-debug-studio-cli",
+  "name": "@brixel/php-debug-studio-cli",
   "version": "1.0.0",
   "description": "Headless collection runner and CI tool for PHP Debug Studio",
   "bin": {
@@ -12,7 +12,7 @@
     "start": "node bin/debug-studio.js"
   },
   "keywords": ["php", "debug", "cli", "runner", "ci"],
-  "author": "zoventra",
+  "author": "brixel",
   "license": "MIT",
   "dependencies": {
     "commander": "^12.0.0"

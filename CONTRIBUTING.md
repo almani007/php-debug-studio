@@ -1,6 +1,6 @@
 # Contributing to PHP Debug Studio
 
-Thank you for your interest in contributing to **PHP Debug Studio** by **zoventra**! We are committed to building an open, local-first developer environment for the PHP and Laravel communities.
+Thank you for your interest in contributing to **PHP Debug Studio** by **brixel**! We are committed to building an open, local-first developer environment for the PHP and Laravel communities.
 
 ---
 

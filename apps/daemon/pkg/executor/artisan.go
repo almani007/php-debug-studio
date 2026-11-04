@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"time"
 )
 
@@ -46,22 +45,22 @@ func RunArtisan(req ArtisanRunRequest) *ArtisanRunResponse {
 		}
 	}
 
-	phpBin := req.PhpBinaryPath
-	if phpBin == "" {
-		phpBin = "php"
+	fullArgs := append([]string{req.Command}, req.Args...)
+	cmd, err := ResolveCommand(req.ProjectPath, req.PhpBinaryPath, "", "", "artisan", fullArgs)
+	if err != nil {
+		return &ArtisanRunResponse{
+			Command:    req.Command,
+			ExitCode:   1,
+			Stderr:     err.Error(),
+			DurationMs: time.Since(start).Milliseconds(),
+		}
 	}
-
-	artisanFile := filepath.Join(req.ProjectPath, "artisan")
-	fullArgs := append([]string{artisanFile, req.Command}, req.Args...)
-
-	cmd := exec.Command(phpBin, fullArgs...)
-	cmd.Dir = req.ProjectPath
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 	duration := time.Since(start).Milliseconds()
 
 	exitCode := 0

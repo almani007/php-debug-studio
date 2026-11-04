@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio\Laravel\Http\Middleware;
+namespace Brixel\DebugStudio\Laravel\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
-use Zoventra\DebugStudio\DebugStudio;
+use Brixel\DebugStudio\DebugStudio;
 
 class DebugStudioMiddleware
 {

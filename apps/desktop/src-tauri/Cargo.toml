@@ -1,8 +1,8 @@
 [package]
 name = "php-debug-studio-desktop"
 version = "1.0.0"
-description = "PHP Debug Studio Desktop Application by zoventra"
-authors = ["zoventra"]
+description = "PHP Debug Studio Desktop Application by brixel"
+authors = ["brixel"]
 license = "MIT"
 edition = "2021"
 

@@ -8,16 +8,16 @@ import (
 	"os/signal"
 	"syscall"
 
-	"zoventra/php-debug-studio/daemon/pkg/api"
-	"zoventra/php-debug-studio/daemon/pkg/dbgp"
-	"zoventra/php-debug-studio/daemon/pkg/executor"
-	"zoventra/php-debug-studio/daemon/pkg/mock"
-	"zoventra/php-debug-studio/daemon/pkg/store"
-	"zoventra/php-debug-studio/daemon/pkg/ws"
+	"brixel/php-debug-studio/daemon/pkg/api"
+	"brixel/php-debug-studio/daemon/pkg/dbgp"
+	"brixel/php-debug-studio/daemon/pkg/executor"
+	"brixel/php-debug-studio/daemon/pkg/mock"
+	"brixel/php-debug-studio/daemon/pkg/store"
+	"brixel/php-debug-studio/daemon/pkg/ws"
 )
 
 func main() {
-	log.Println("Starting PHP Debug Studio Daemon v1.0.0 (by zoventra)...")
+	log.Println("Starting PHP Debug Studio Daemon v1.0.0 (by brixel)...")
 
 	dbPath := os.Getenv("DEBUG_STUDIO_DB_PATH")
 	if dbPath == "" {
@@ -36,7 +36,16 @@ func main() {
 	execEngine := executor.NewEngine()
 
 	// Initialize DBGp Xdebug bridge
-	dbgpListener := dbgp.NewListener("127.0.0.1:9003", func(session *dbgp.DebugSession, event string) {
+	dbgpHost := os.Getenv("DEBUG_STUDIO_DBGP_HOST")
+	if dbgpHost == "" {
+		dbgpHost = "0.0.0.0"
+	}
+	dbgpPort := os.Getenv("DEBUG_STUDIO_DBGP_PORT")
+	if dbgpPort == "" {
+		dbgpPort = "9003"
+	}
+	dbgpAddr := fmt.Sprintf("%s:%s", dbgpHost, dbgpPort)
+	dbgpListener := dbgp.NewListener(dbgpAddr, func(session *dbgp.DebugSession, event string) {
 		hub.Broadcast("dbgp_session_event", session.ProjectID, map[string]interface{}{
 			"session_id": session.ID,
 			"event":      event,
@@ -45,9 +54,9 @@ func main() {
 	})
 
 	if err := dbgpListener.Start(); err != nil {
-		log.Printf("Warning: DBGp listener failed to start: %v", err)
+		log.Printf("Warning: DBGp listener failed to start on %s: %v", dbgpAddr, err)
 	} else {
-		log.Printf("DBGp Xdebug listener active on 127.0.0.1:9003")
+		log.Printf("DBGp Xdebug listener active on %s", dbgpAddr)
 		defer dbgpListener.Close()
 	}
 
@@ -58,7 +67,11 @@ func main() {
 	if port == "" {
 		port = "8765"
 	}
-	bindAddr := fmt.Sprintf("127.0.0.1:%s", port)
+	host := os.Getenv("DEBUG_STUDIO_HOST")
+	if host == "" {
+		host = "0.0.0.0"
+	}
+	bindAddr := fmt.Sprintf("%s:%s", host, port)
 
 	httpServer := &http.Server{
 		Addr:    bindAddr,

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio\Collectors;
+namespace Brixel\DebugStudio\Collectors;
 
 use Throwable;
 

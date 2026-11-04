@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace Zoventra\DebugStudio\Transports;
+namespace Brixel\DebugStudio\Transports;
 
-use Zoventra\DebugStudio\Contracts\TransportInterface;
+use Brixel\DebugStudio\Contracts\TransportInterface;
 
 class HttpTransport implements TransportInterface
 {
