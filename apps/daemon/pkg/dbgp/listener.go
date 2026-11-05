@@ -34,36 +34,50 @@ type StackFrame struct {
 }
 
 type DebugSession struct {
-	ID        string       `json:"id"`
-	ProjectID string       `json:"project_id"`
-	State     SessionState `json:"state"`
-	FileURI   string       `json:"file_uri"`
-	Line      int          `json:"line"`
-	StartedAt time.Time    `json:"started_at"`
-	Frames    []StackFrame `json:"frames,omitempty"`
-	LastEval  string       `json:"last_eval,omitempty"`
-	conn      net.Conn
-	txID      int
-	mutex     sync.Mutex
+	ID           string       `json:"id"`
+	ProjectID    string       `json:"project_id"`
+	State        SessionState `json:"state"`
+	FileURI      string       `json:"file_uri"`
+	Line         int          `json:"line"`
+	StartedAt    time.Time    `json:"started_at"`
+	Frames       []StackFrame `json:"frames,omitempty"`
+	LastEval     string       `json:"last_eval,omitempty"`
+	TraceActive  bool         `json:"trace_active"`
+	TraceID      string       `json:"trace_id,omitempty"`
+	LastVars     map[string]interface{} `json:"last_vars,omitempty"`
+	conn         net.Conn
+	txID         int
+	mutex        sync.Mutex
 }
 
 type Listener struct {
-	address  string
-	listener net.Listener
-	sessions map[string]*DebugSession
-	mutex    sync.RWMutex
-	onEvent  func(session *DebugSession, event string)
+	address      string
+	listener     net.Listener
+	sessions     map[string]*DebugSession
+	mutex        sync.RWMutex
+	onEvent      func(session *DebugSession, event string)
+	traceManager *TraceManager
 }
 
 func NewListener(address string, onEvent func(session *DebugSession, event string)) *Listener {
 	if address == "" {
 		address = "127.0.0.1:9003"
 	}
-	return &Listener{
+	l := &Listener{
 		address:  address,
 		sessions: make(map[string]*DebugSession),
 		onEvent:  onEvent,
 	}
+	// TraceManager is set externally via SetTraceManager
+	return l
+}
+
+func (l *Listener) SetTraceManager(tm *TraceManager) {
+	l.traceManager = tm
+}
+
+func (l *Listener) GetTraceManager() *TraceManager {
+	return l.traceManager
 }
 
 func (l *Listener) Start() error {
@@ -119,6 +133,7 @@ var (
 	reWhere    = regexp.MustCompile(`where="([^"]+)"`)
 	reLevel    = regexp.MustCompile(`level="([0-9]+)"`)
 	reProperty = regexp.MustCompile(`(?s)<property[^>]*>(.*?)</property>`)
+	reContext  = regexp.MustCompile(`(?s)<response[^>]*command="context_get"[^>]*>(.*)</response>`)
 )
 
 func (l *Listener) handleConnection(conn net.Conn) {
@@ -136,6 +151,12 @@ func (l *Listener) handleConnection(conn net.Conn) {
 	l.mutex.Unlock()
 
 	defer func() {
+		// If trace was active, stop it
+		if session.TraceActive && l.traceManager != nil {
+			l.traceManager.StopTrace(session.TraceID)
+			session.TraceActive = false
+		}
+
 		l.mutex.Lock()
 		delete(l.sessions, sessionID)
 		l.mutex.Unlock()
@@ -184,6 +205,23 @@ func (l *Listener) handleConnection(conn net.Conn) {
 			continue
 		}
 
+		// Parse context_get response (for variable capture in trace mode)
+		if bytes.Contains(payload, []byte(`command="context_get"`)) {
+			vars := ParseVariables(str)
+			if len(vars) > 0 {
+				session.LastVars = vars
+				// If tracing, update the last step with variables
+				if session.TraceActive && l.traceManager != nil {
+					rec := l.traceManager.GetRecording(session.TraceID)
+					if rec != nil && len(rec.Steps) > 0 {
+						l.traceManager.mutex.Lock()
+						rec.Steps[len(rec.Steps)-1].Variables = vars
+						l.traceManager.mutex.Unlock()
+					}
+				}
+			}
+		}
+
 		// Parse DBGp status changes
 		if sm := reStatus.FindStringSubmatch(str); len(sm) > 1 {
 			switch sm[1] {
@@ -203,6 +241,14 @@ func (l *Listener) handleConnection(conn net.Conn) {
 				session.State = StateRunning
 			case "stopping":
 				session.State = StateStopping
+				// If trace was active, complete it
+				if session.TraceActive && l.traceManager != nil {
+					l.traceManager.StopTrace(session.TraceID)
+					session.TraceActive = false
+					if l.onEvent != nil {
+						l.onEvent(session, "trace_completed")
+					}
+				}
 			case "stopped":
 				session.State = StateStopped
 			}
@@ -211,6 +257,13 @@ func (l *Listener) handleConnection(conn net.Conn) {
 		// Parse stack frames if response to stack_get
 		if bytes.Contains(payload, []byte("<stack")) {
 			session.parseStackFrames(str)
+
+			// ── TRACE MODE: auto-step after stack is parsed ──
+			if session.TraceActive && session.State == StateBreak && l.traceManager != nil {
+				l.traceManager.RecordStep(session)
+				// RecordStep will auto-send step_into/step_over
+				continue // Don't emit normal session_updated during trace
+			}
 		}
 
 		// Parse property evaluation if response to eval

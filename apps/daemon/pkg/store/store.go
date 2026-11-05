@@ -25,6 +25,16 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("migration failed: %w", err)
 	}
 
+	// Initialize enhanced QA and DB management tables
+	if err := s.InitQATables(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("QA tables init failed: %w", err)
+	}
+	if err := s.InitManagementTables(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("management tables init failed: %w", err)
+	}
+
 	return s, nil
 }
 

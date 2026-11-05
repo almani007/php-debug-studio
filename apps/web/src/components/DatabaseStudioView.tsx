@@ -58,7 +58,7 @@ export const DatabaseStudioView: React.FC<DatabaseStudioViewProps> = ({
 }) => {
   // Navigation & View Mode
   const [activeTab, setActiveTab] = useState<
-    'grid' | 'structure' | 'console' | 'erd' | 'explain' | 'advisor' | 'analytics' | 'maintenance' | 'connections'
+    'grid' | 'structure' | 'console' | 'erd' | 'explain' | 'advisor' | 'analytics' | 'maintenance' | 'connections' | 'export' | 'import' | 'migration' | 'saved' | 'compare' | 'perfmon'
   >('grid');
 
   // Connections state
@@ -150,6 +150,208 @@ export const DatabaseStudioView: React.FC<DatabaseStudioViewProps> = ({
   const [activeProcesses, setActiveProcesses] = useState<any[]>([]);
   const [maintenanceLoading, setMaintenanceLoading] = useState<boolean>(false);
   const [maintenanceMsg, setMaintenanceMsg] = useState<string>('');
+  // === NEW: Data Export state ===
+  const [exportFormat, setExportFormat] = useState<'csv' | 'json' | 'sql'>('csv');
+  const [exportWhere, setExportWhere] = useState<string>('');
+  const [exportLimit, setExportLimit] = useState<number>(1000);
+  const [exportResult, setExportResult] = useState<string>('');
+  const [exportLoading, setExportLoading] = useState<boolean>(false);
+
+  // === NEW: Data Import state ===
+  const [importFormat, setImportFormat] = useState<'csv' | 'json'>('csv');
+  const [importData, setImportData] = useState<string>('');
+  const [importPreview, setImportPreview] = useState<any[] | null>(null);
+  const [importResult, setImportResult] = useState<any | null>(null);
+  const [importLoading, setImportLoading] = useState<boolean>(false);
+  const [importTargetTable, setImportTargetTable] = useState<string>('');
+
+  // === NEW: Migration Generator state ===
+  const [migSourceConn, setMigSourceConn] = useState<string>('');
+  const [migTargetConn, setMigTargetConn] = useState<string>('');
+  const [migResult, setMigResult] = useState<any | null>(null);
+  const [migLoading, setMigLoading] = useState<boolean>(false);
+
+  // === NEW: Saved Queries state ===
+  const [savedQueries, setSavedQueries] = useState<any[]>([]);
+  const [savedQuerySearch, setSavedQuerySearch] = useState<string>('');
+  const [newQueryName, setNewQueryName] = useState<string>('');
+  const [savingQuery, setSavingQuery] = useState<boolean>(false);
+
+  // === NEW: Schema Compare state ===
+  const [cmpLeftConn, setCmpLeftConn] = useState<string>('');
+  const [cmpRightConn, setCmpRightConn] = useState<string>('');
+  const [cmpResult, setCmpResult] = useState<any | null>(null);
+  const [cmpLoading, setCmpLoading] = useState<boolean>(false);
+
+  // === NEW: Performance Monitor state ===
+  const [perfAutoRefresh, setPerfAutoRefresh] = useState<boolean>(false);
+  const [perfMetrics, setPerfMetrics] = useState<any | null>(null);
+  const [perfHistory, setPerfHistory] = useState<number[]>([]);
+  const [perfLoading, setPerfLoading] = useState<boolean>(false);
+
+
+
+  // === NEW: Export handler ===
+  const handleExport = async () => {
+    if (!selectedTable) { alert('Select a table first'); return; }
+    setExportLoading(true);
+    setExportResult('');
+    try {
+      const res = await api.exportTableData(selectedConnId, selectedTable, exportFormat, exportWhere, exportLimit);
+      setExportResult(res?.content || '');
+    } catch (err: any) {
+      alert(`Export failed: ${err.message}`);
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const handleDownloadExport = () => {
+    if (!exportResult) return;
+    const ext = exportFormat === 'csv' ? 'csv' : exportFormat === 'json' ? 'json' : 'sql';
+    const mime = exportFormat === 'csv' ? 'text/csv' : exportFormat === 'json' ? 'application/json' : 'text/sql';
+    const blob = new Blob([exportResult], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${selectedTable}_export.${ext}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // === NEW: Import handler ===
+  const handlePreviewImport = () => {
+    if (!importData.trim()) return;
+    try {
+      if (importFormat === 'json') {
+        const parsed = JSON.parse(importData);
+        const rows = Array.isArray(parsed) ? parsed : [parsed];
+        setImportPreview(rows.slice(0, 5));
+      } else {
+        const lines = importData.trim().split('\n');
+        if (lines.length < 2) { setImportPreview([]); return; }
+        const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+        const rows = lines.slice(1, 6).map(line => {
+          const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+          const obj: Record<string, string> = {};
+          headers.forEach((h, i) => { obj[h] = vals[i] || ''; });
+          return obj;
+        });
+        setImportPreview(rows);
+      }
+    } catch (err: any) {
+      alert(`Parse error: ${err.message}`);
+    }
+  };
+
+  const handleImport = async () => {
+    const table = importTargetTable || selectedTable;
+    if (!table) { alert('Select a target table'); return; }
+    if (!importData.trim()) { alert('Paste data first'); return; }
+    setImportLoading(true);
+    setImportResult(null);
+    try {
+      const res = await api.importTableData(selectedConnId, table, importFormat, importData);
+      setImportResult(res);
+    } catch (err: any) {
+      alert(`Import failed: ${err.message}`);
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  // === NEW: Migration generator handler ===
+  const handleGenerateMigration = async () => {
+    if (!migSourceConn || !migTargetConn) { alert('Select both source and target connections'); return; }
+    setMigLoading(true);
+    setMigResult(null);
+    try {
+      const res = await api.generateMigration(migSourceConn, migTargetConn);
+      setMigResult(res);
+    } catch (err: any) {
+      alert(`Migration generation failed: ${err.message}`);
+    } finally {
+      setMigLoading(false);
+    }
+  };
+
+  // === NEW: Saved Queries handlers ===
+  const loadSavedQueries = async () => {
+    try {
+      const res = await api.getSavedQueries(selectedConnId);
+      setSavedQueries(res || []);
+    } catch (err: any) {
+      console.error('Failed to load saved queries:', err);
+    }
+  };
+
+  const handleSaveQuery = async () => {
+    const activeQTab = queryTabs.find(t => t.id === activeQueryTabId);
+    if (!activeQTab?.sql?.trim()) { alert('No query to save'); return; }
+    if (!newQueryName.trim()) { alert('Enter a name for the query'); return; }
+    setSavingQuery(true);
+    try {
+      await api.saveQuery({
+        name: newQueryName,
+        sql: activeQTab.sql,
+        connection_id: selectedConnId,
+      });
+      setNewQueryName('');
+      loadSavedQueries();
+    } catch (err: any) {
+      alert(`Failed to save query: ${err.message}`);
+    } finally {
+      setSavingQuery(false);
+    }
+  };
+
+  const handleDeleteSavedQuery = async (id: string) => {
+    if (!confirm('Delete this saved query?')) return;
+    try {
+      await api.deleteSavedQuery(id);
+      loadSavedQueries();
+    } catch (err: any) {
+      alert(`Failed to delete: ${err.message}`);
+    }
+  };
+
+  const handleLoadSavedQuery = (sql: string) => {
+    setQueryTabs(prev => prev.map(t =>
+      t.id === activeQueryTabId ? { ...t, sql } : t
+    ));
+    setActiveTab('console');
+  };
+
+  // === NEW: Schema Compare handler ===
+  const handleCompareSchemas = async () => {
+    if (!cmpLeftConn || !cmpRightConn) { alert('Select both connections'); return; }
+    setCmpLoading(true);
+    setCmpResult(null);
+    try {
+      const res = await api.compareSchemas(cmpLeftConn, cmpRightConn);
+      setCmpResult(res);
+    } catch (err: any) {
+      alert(`Compare failed: ${err.message}`);
+    } finally {
+      setCmpLoading(false);
+    }
+  };
+
+  // === NEW: Performance Monitor handler ===
+  const loadPerfMetrics = async () => {
+    setPerfLoading(true);
+    try {
+      const res = await api.getRealtimeMetrics(selectedConnId);
+      setPerfMetrics(res);
+      if (res?.queries_per_sec != null) {
+        setPerfHistory(prev => [...prev.slice(-29), res.queries_per_sec]);
+      }
+    } catch (err: any) {
+      console.error('Perf metrics error:', err);
+    } finally {
+      setPerfLoading(false);
+    }
+  };
 
   // 1. Initial Load of Connections and Analytics
   useEffect(() => {
@@ -171,6 +373,23 @@ export const DatabaseStudioView: React.FC<DatabaseStudioViewProps> = ({
       loadTableDDL(selectedConnId, selectedTable);
     }
   }, [selectedTable, selectedConnId]);
+
+
+  // === NEW: Performance Monitor auto-refresh ===
+  useEffect(() => {
+    if (activeTab === 'perfmon') {
+      loadPerfMetrics();
+    }
+    if (activeTab === 'saved') {
+      loadSavedQueries();
+    }
+  }, [activeTab, selectedConnId]);
+
+  useEffect(() => {
+    if (!perfAutoRefresh || activeTab !== 'perfmon') return;
+    const interval = setInterval(loadPerfMetrics, 5000);
+    return () => clearInterval(interval);
+  }, [perfAutoRefresh, activeTab, selectedConnId]);
 
   const loadConnections = async () => {
     setLoadingConns(true);
@@ -846,6 +1065,12 @@ export const DatabaseStudioView: React.FC<DatabaseStudioViewProps> = ({
               { id: 'analytics', label: `📊 Live Traces (${sqlAnalytics.length})`, icon: BarChart2 },
               { id: 'maintenance', label: '🛠️ Maintenance & Ops', icon: Activity },
               { id: 'connections', label: '🔌 Connections', icon: Database },
+              { id: 'export', label: '📤 Data Export', icon: Download },
+              { id: 'import', label: '📥 Data Import', icon: Plus },
+              { id: 'saved', label: '⭐ Saved Queries', icon: FileCode },
+              { id: 'migration', label: '🔄 Migration Gen', icon: GitBranch },
+              { id: 'compare', label: '🔀 Schema Compare', icon: Layers },
+              { id: 'perfmon', label: '📈 Performance', icon: Activity },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -2500,6 +2725,563 @@ export const DatabaseStudioView: React.FC<DatabaseStudioViewProps> = ({
                     </div>
                   ))}
                 </div>
+              </div>
+            </div>
+          )}
+
+
+          {/* =========================================================================
+              TAB 10: DATA EXPORT
+          ========================================================================= */}
+          {activeTab === 'export' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', height: '100%', overflow: 'auto' }}>
+              <div style={{ padding: '14px', backgroundColor: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '10px' }}>📤 Export Table Data</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '10px' }}>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, display: 'block', marginBottom: '4px' }}>TABLE</label>
+                    <select
+                      value={selectedTable}
+                      onChange={(e) => setSelectedTable(e.target.value)}
+                      style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-main)', color: 'var(--text-primary)', fontSize: '12px' }}
+                    >
+                      <option value="">Select table...</option>
+                      {schema?.tables?.map((t: any) => (
+                        <option key={t.name} value={t.name}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, display: 'block', marginBottom: '4px' }}>FORMAT</label>
+                    <select
+                      value={exportFormat}
+                      onChange={(e) => setExportFormat(e.target.value as any)}
+                      style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-main)', color: 'var(--text-primary)', fontSize: '12px' }}
+                    >
+                      <option value="csv">CSV (Comma Separated)</option>
+                      <option value="json">JSON (Array of Objects)</option>
+                      <option value="sql">SQL (INSERT Statements)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, display: 'block', marginBottom: '4px' }}>ROW LIMIT</label>
+                    <input
+                      type="number"
+                      value={exportLimit}
+                      onChange={(e) => setExportLimit(Number(e.target.value) || 1000)}
+                      style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-main)', color: 'var(--text-primary)', fontSize: '12px' }}
+                    />
+                  </div>
+                </div>
+                <div style={{ marginTop: '10px' }}>
+                  <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, display: 'block', marginBottom: '4px' }}>WHERE CLAUSE (optional)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. status = 'active' AND created_at > '2024-01-01'"
+                    value={exportWhere}
+                    onChange={(e) => setExportWhere(e.target.value)}
+                    style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-main)', color: 'var(--text-primary)', fontSize: '12px', fontFamily: 'monospace' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                  <button
+                    onClick={handleExport}
+                    disabled={exportLoading || !selectedTable}
+                    style={{ padding: '6px 16px', borderRadius: '4px', border: 'none', backgroundColor: 'var(--accent)', color: '#fff', fontSize: '12px', fontWeight: 600, cursor: 'pointer', opacity: exportLoading ? 0.6 : 1 }}
+                  >
+                    {exportLoading ? 'Exporting...' : '⬇️ Export'}
+                  </button>
+                  {exportResult && (
+                    <>
+                      <button
+                        onClick={handleDownloadExport}
+                        style={{ padding: '6px 16px', borderRadius: '4px', border: '1px solid var(--accent)', background: 'none', color: 'var(--accent)', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                      >
+                        💾 Download File
+                      </button>
+                      <button
+                        onClick={() => { navigator.clipboard.writeText(exportResult); }}
+                        style={{ padding: '6px 16px', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'none', color: 'var(--text-secondary)', fontSize: '12px', cursor: 'pointer' }}
+                      >
+                        📋 Copy
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+              {exportResult && (
+                <div style={{ flex: 1, padding: '14px', backgroundColor: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                    Export Result ({exportResult.split('\n').length} lines, {(exportResult.length / 1024).toFixed(1)} KB)
+                  </div>
+                  <textarea
+                    readOnly
+                    value={exportResult}
+                    style={{ flex: 1, width: '100%', minHeight: '300px', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-main)', color: 'var(--text-primary)', fontSize: '11px', fontFamily: 'monospace', resize: 'vertical' }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* =========================================================================
+              TAB 11: DATA IMPORT
+          ========================================================================= */}
+          {activeTab === 'import' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', height: '100%', overflow: 'auto' }}>
+              <div style={{ padding: '14px', backgroundColor: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '10px' }}>📥 Import Data Into Table</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '10px' }}>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, display: 'block', marginBottom: '4px' }}>TARGET TABLE</label>
+                    <select
+                      value={importTargetTable || selectedTable}
+                      onChange={(e) => setImportTargetTable(e.target.value)}
+                      style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-main)', color: 'var(--text-primary)', fontSize: '12px' }}
+                    >
+                      <option value="">Select table...</option>
+                      {schema?.tables?.map((t: any) => (
+                        <option key={t.name} value={t.name}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, display: 'block', marginBottom: '4px' }}>FORMAT</label>
+                    <select
+                      value={importFormat}
+                      onChange={(e) => setImportFormat(e.target.value as any)}
+                      style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-main)', color: 'var(--text-primary)', fontSize: '12px' }}
+                    >
+                      <option value="csv">CSV (with header row)</option>
+                      <option value="json">JSON (array of objects)</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ marginTop: '10px' }}>
+                  <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, display: 'block', marginBottom: '4px' }}>PASTE DATA</label>
+                  <textarea
+                    value={importData}
+                    onChange={(e) => setImportData(e.target.value)}
+                    placeholder={importFormat === 'csv' ? 'name,email,age\nJohn,john@test.com,30\nJane,jane@test.com,25' : '[{"name":"John","email":"john@test.com"},{"name":"Jane","email":"jane@test.com"}]'}
+                    style={{ width: '100%', height: '150px', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-main)', color: 'var(--text-primary)', fontSize: '11px', fontFamily: 'monospace', resize: 'vertical' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                  <button
+                    onClick={handlePreviewImport}
+                    style={{ padding: '6px 16px', borderRadius: '4px', border: '1px solid var(--accent)', background: 'none', color: 'var(--accent)', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    👁️ Preview
+                  </button>
+                  <button
+                    onClick={handleImport}
+                    disabled={importLoading || !importData.trim()}
+                    style={{ padding: '6px 16px', borderRadius: '4px', border: 'none', backgroundColor: '#22c55e', color: '#fff', fontSize: '12px', fontWeight: 600, cursor: 'pointer', opacity: importLoading ? 0.6 : 1 }}
+                  >
+                    {importLoading ? 'Importing...' : '📥 Import Data'}
+                  </button>
+                </div>
+              </div>
+              {importPreview && importPreview.length > 0 && (
+                <div style={{ padding: '14px', backgroundColor: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '8px' }}>Preview (first {importPreview.length} rows)</div>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                      <thead>
+                        <tr>
+                          {Object.keys(importPreview[0]).map(col => (
+                            <th key={col} style={{ padding: '4px 8px', borderBottom: '1px solid var(--border-color)', textAlign: 'left', color: 'var(--accent)', fontWeight: 600, whiteSpace: 'nowrap' }}>{col}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importPreview.map((row, i) => (
+                          <tr key={i}>
+                            {Object.values(row).map((val: any, j) => (
+                              <td key={j} style={{ padding: '4px 8px', borderBottom: '1px solid var(--border-color)', color: 'var(--text-primary)' }}>{String(val ?? '')}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {importResult && (
+                <div style={{ padding: '14px', backgroundColor: 'var(--bg-card)', borderRadius: '6px', border: `1px solid ${importResult.errors?.length > 0 ? 'var(--danger)' : '#22c55e'}` }}>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: importResult.errors?.length > 0 ? 'var(--danger)' : '#22c55e' }}>
+                    {importResult.errors?.length > 0 ? '⚠️ Import completed with errors' : '✅ Import Successful'}
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '6px' }}>
+                    Rows imported: {importResult.rows_imported || 0} | Errors: {importResult.errors?.length || 0}
+                  </div>
+                  {importResult.errors?.length > 0 && (
+                    <pre style={{ fontSize: '11px', color: 'var(--danger)', marginTop: '8px', whiteSpace: 'pre-wrap' }}>
+                      {importResult.errors.join('\n')}
+                    </pre>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* =========================================================================
+              TAB 12: SAVED QUERIES
+          ========================================================================= */}
+          {activeTab === 'saved' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', height: '100%', overflow: 'auto' }}>
+              <div style={{ padding: '14px', backgroundColor: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '10px' }}>⭐ Saved Queries</h3>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input
+                    type="text"
+                    placeholder="Query name..."
+                    value={newQueryName}
+                    onChange={(e) => setNewQueryName(e.target.value)}
+                    style={{ flex: 1, minWidth: '150px', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-main)', color: 'var(--text-primary)', fontSize: '12px' }}
+                  />
+                  <button
+                    onClick={handleSaveQuery}
+                    disabled={savingQuery}
+                    style={{ padding: '6px 16px', borderRadius: '4px', border: 'none', backgroundColor: 'var(--accent)', color: '#fff', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    {savingQuery ? 'Saving...' : '💾 Save Current Console Query'}
+                  </button>
+                  <input
+                    type="text"
+                    placeholder="🔍 Search saved queries..."
+                    value={savedQuerySearch}
+                    onChange={(e) => setSavedQuerySearch(e.target.value)}
+                    style={{ width: '200px', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-main)', color: 'var(--text-primary)', fontSize: '12px' }}
+                  />
+                </div>
+              </div>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px', overflow: 'auto' }}>
+                {savedQueries.length === 0 && (
+                  <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                    No saved queries yet. Write a query in the SQL Console, then save it here.
+                  </div>
+                )}
+                {savedQueries
+                  .filter(q => !savedQuerySearch || q.name?.toLowerCase().includes(savedQuerySearch.toLowerCase()) || q.sql?.toLowerCase().includes(savedQuerySearch.toLowerCase()))
+                  .map((q) => (
+                  <div key={q.id} style={{ padding: '10px 14px', backgroundColor: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{q.name || 'Untitled'}</div>
+                      <div style={{ fontSize: '11px', fontFamily: 'monospace', color: 'var(--text-secondary)', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '500px' }}>
+                        {q.sql}
+                      </div>
+                      <div style={{ fontSize: '10px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                        Connection: {q.connection_id || 'default'} | {q.created_at ? new Date(q.created_at).toLocaleDateString() : ''}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleLoadSavedQuery(q.sql)}
+                      style={{ padding: '4px 12px', borderRadius: '4px', border: '1px solid var(--accent)', background: 'none', color: 'var(--accent)', fontSize: '11px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                    >
+                      ▶ Load
+                    </button>
+                    <button
+                      onClick={() => handleDeleteSavedQuery(q.id)}
+                      style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--danger)', background: 'none', color: 'var(--danger)', fontSize: '11px', cursor: 'pointer' }}
+                    >
+                      🗑️
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* =========================================================================
+              TAB 13: MIGRATION GENERATOR
+          ========================================================================= */}
+          {activeTab === 'migration' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', height: '100%', overflow: 'auto' }}>
+              <div style={{ padding: '14px', backgroundColor: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '6px' }}>🔄 Laravel Migration Generator</h3>
+                <p style={{ fontSize: '11px', color: 'var(--text-secondary)', margin: '0 0 12px 0' }}>
+                  Compare two database connections and auto-generate Laravel migration code to bring the source schema to the target state.
+                </p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 60px 1fr', gap: '10px', alignItems: 'end' }}>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, display: 'block', marginBottom: '4px' }}>SOURCE (Current State)</label>
+                    <select
+                      value={migSourceConn}
+                      onChange={(e) => setMigSourceConn(e.target.value)}
+                      style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-main)', color: 'var(--text-primary)', fontSize: '12px' }}
+                    >
+                      <option value="">Select connection...</option>
+                      {connections.map(c => <option key={c.id} value={c.id}>{c.name} ({c.driver})</option>)}
+                    </select>
+                  </div>
+                  <div style={{ textAlign: 'center', fontSize: '18px', paddingBottom: '4px' }}>→</div>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, display: 'block', marginBottom: '4px' }}>TARGET (Desired State)</label>
+                    <select
+                      value={migTargetConn}
+                      onChange={(e) => setMigTargetConn(e.target.value)}
+                      style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-main)', color: 'var(--text-primary)', fontSize: '12px' }}
+                    >
+                      <option value="">Select connection...</option>
+                      {connections.map(c => <option key={c.id} value={c.id}>{c.name} ({c.driver})</option>)}
+                    </select>
+                  </div>
+                </div>
+                <button
+                  onClick={handleGenerateMigration}
+                  disabled={migLoading}
+                  style={{ marginTop: '12px', padding: '8px 24px', borderRadius: '4px', border: 'none', backgroundColor: 'var(--accent)', color: '#fff', fontSize: '12px', fontWeight: 600, cursor: 'pointer', opacity: migLoading ? 0.6 : 1 }}
+                >
+                  {migLoading ? 'Generating...' : '⚡ Compare & Generate Migration'}
+                </button>
+              </div>
+              {migResult && (
+                <>
+                  {/* Diff Summary */}
+                  <div style={{ padding: '14px', backgroundColor: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                    <h4 style={{ fontSize: '13px', fontWeight: 600, marginBottom: '8px' }}>Schema Differences</h4>
+                    <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', fontSize: '12px' }}>
+                      <span style={{ color: '#22c55e' }}>+ {migResult.added_tables?.length || 0} new tables</span>
+                      <span style={{ color: 'var(--danger)' }}>- {migResult.removed_tables?.length || 0} removed tables</span>
+                      <span style={{ color: '#eab308' }}>~ {migResult.modified_tables?.length || 0} modified tables</span>
+                    </div>
+                    {migResult.added_tables?.length > 0 && (
+                      <div style={{ marginTop: '8px' }}>
+                        <span style={{ fontSize: '11px', fontWeight: 600, color: '#22c55e' }}>Added: </span>
+                        <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{migResult.added_tables.join(', ')}</span>
+                      </div>
+                    )}
+                    {migResult.removed_tables?.length > 0 && (
+                      <div style={{ marginTop: '4px' }}>
+                        <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--danger)' }}>Removed: </span>
+                        <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{migResult.removed_tables.join(', ')}</span>
+                      </div>
+                    )}
+                    {migResult.modified_tables?.map((mt: any) => (
+                      <div key={mt.table} style={{ marginTop: '6px', padding: '6px', backgroundColor: 'var(--bg-main)', borderRadius: '4px', fontSize: '11px' }}>
+                        <span style={{ fontWeight: 600, color: '#eab308' }}>{mt.table}:</span>{' '}
+                        <span style={{ color: 'var(--text-secondary)' }}>{mt.changes?.join(', ')}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Migration Code */}
+                  {migResult.migration_code && (
+                    <div style={{ padding: '14px', backgroundColor: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <h4 style={{ fontSize: '13px', fontWeight: 600 }}>Generated Laravel Migration</h4>
+                        <button
+                          onClick={() => navigator.clipboard.writeText(migResult.migration_code)}
+                          style={{ padding: '4px 12px', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'none', color: 'var(--text-secondary)', fontSize: '11px', cursor: 'pointer' }}
+                        >
+                          📋 Copy Migration
+                        </button>
+                      </div>
+                      <pre style={{ padding: '10px', backgroundColor: 'var(--bg-main)', borderRadius: '4px', fontSize: '11px', fontFamily: 'monospace', color: 'var(--text-primary)', overflow: 'auto', maxHeight: '500px', whiteSpace: 'pre-wrap' }}>
+                        {migResult.migration_code}
+                      </pre>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* =========================================================================
+              TAB 14: SCHEMA COMPARE
+          ========================================================================= */}
+          {activeTab === 'compare' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', height: '100%', overflow: 'auto' }}>
+              <div style={{ padding: '14px', backgroundColor: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '10px' }}>🔀 Schema Compare</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, display: 'block', marginBottom: '4px' }}>LEFT DATABASE</label>
+                    <select
+                      value={cmpLeftConn}
+                      onChange={(e) => setCmpLeftConn(e.target.value)}
+                      style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-main)', color: 'var(--text-primary)', fontSize: '12px' }}
+                    >
+                      <option value="">Select connection...</option>
+                      {connections.map(c => <option key={c.id} value={c.id}>{c.name} ({c.driver})</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600, display: 'block', marginBottom: '4px' }}>RIGHT DATABASE</label>
+                    <select
+                      value={cmpRightConn}
+                      onChange={(e) => setCmpRightConn(e.target.value)}
+                      style={{ width: '100%', padding: '6px 8px', borderRadius: '4px', border: '1px solid var(--border-color)', backgroundColor: 'var(--bg-main)', color: 'var(--text-primary)', fontSize: '12px' }}
+                    >
+                      <option value="">Select connection...</option>
+                      {connections.map(c => <option key={c.id} value={c.id}>{c.name} ({c.driver})</option>)}
+                    </select>
+                  </div>
+                </div>
+                <button
+                  onClick={handleCompareSchemas}
+                  disabled={cmpLoading}
+                  style={{ marginTop: '12px', padding: '8px 24px', borderRadius: '4px', border: 'none', backgroundColor: 'var(--accent)', color: '#fff', fontSize: '12px', fontWeight: 600, cursor: 'pointer', opacity: cmpLoading ? 0.6 : 1 }}
+                >
+                  {cmpLoading ? 'Comparing...' : '🔍 Compare Schemas'}
+                </button>
+              </div>
+              {cmpResult && (
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px', overflow: 'auto' }}>
+                  {/* Tables only in LEFT */}
+                  {cmpResult.only_left?.length > 0 && (
+                    <div style={{ padding: '10px 14px', backgroundColor: 'var(--bg-card)', borderRadius: '6px', borderLeft: '3px solid #22c55e' }}>
+                      <div style={{ fontSize: '12px', fontWeight: 600, color: '#22c55e', marginBottom: '4px' }}>Tables only in LEFT ({cmpResult.only_left.length})</div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{cmpResult.only_left.join(', ')}</div>
+                    </div>
+                  )}
+                  {/* Tables only in RIGHT */}
+                  {cmpResult.only_right?.length > 0 && (
+                    <div style={{ padding: '10px 14px', backgroundColor: 'var(--bg-card)', borderRadius: '6px', borderLeft: '3px solid var(--danger)' }}>
+                      <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--danger)', marginBottom: '4px' }}>Tables only in RIGHT ({cmpResult.only_right.length})</div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{cmpResult.only_right.join(', ')}</div>
+                    </div>
+                  )}
+                  {/* Tables with differences */}
+                  {cmpResult.differences?.length > 0 && cmpResult.differences.map((diff: any) => (
+                    <div key={diff.table} style={{ padding: '10px 14px', backgroundColor: 'var(--bg-card)', borderRadius: '6px', borderLeft: '3px solid #eab308' }}>
+                      <div style={{ fontSize: '12px', fontWeight: 600, color: '#eab308', marginBottom: '6px' }}>{diff.table}</div>
+                      {diff.added_columns?.length > 0 && (
+                        <div style={{ fontSize: '11px', marginBottom: '2px' }}>
+                          <span style={{ color: '#22c55e', fontWeight: 600 }}>+ Columns:</span>{' '}
+                          <span style={{ color: 'var(--text-secondary)' }}>{diff.added_columns.map((c: any) => `${c.name} (${c.type})`).join(', ')}</span>
+                        </div>
+                      )}
+                      {diff.removed_columns?.length > 0 && (
+                        <div style={{ fontSize: '11px', marginBottom: '2px' }}>
+                          <span style={{ color: 'var(--danger)', fontWeight: 600 }}>- Columns:</span>{' '}
+                          <span style={{ color: 'var(--text-secondary)' }}>{diff.removed_columns.map((c: any) => c.name || c).join(', ')}</span>
+                        </div>
+                      )}
+                      {diff.modified_columns?.length > 0 && (
+                        <div style={{ fontSize: '11px', marginBottom: '2px' }}>
+                          <span style={{ color: '#eab308', fontWeight: 600 }}>~ Columns:</span>{' '}
+                          <span style={{ color: 'var(--text-secondary)' }}>{diff.modified_columns.map((c: any) => `${c.name}: ${c.change}`).join(', ')}</span>
+                        </div>
+                      )}
+                      {diff.index_changes?.length > 0 && (
+                        <div style={{ fontSize: '11px' }}>
+                          <span style={{ color: '#a78bfa', fontWeight: 600 }}>Indexes:</span>{' '}
+                          <span style={{ color: 'var(--text-secondary)' }}>{diff.index_changes.join(', ')}</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {!cmpResult.only_left?.length && !cmpResult.only_right?.length && !cmpResult.differences?.length && (
+                    <div style={{ padding: '40px', textAlign: 'center', color: '#22c55e', fontSize: '14px' }}>
+                      ✅ Schemas are identical — no differences found.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* =========================================================================
+              TAB 15: REAL-TIME PERFORMANCE MONITOR
+          ========================================================================= */}
+          {activeTab === 'perfmon' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', height: '100%', overflow: 'auto' }}>
+              <div style={{ padding: '14px', backgroundColor: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <h3 style={{ fontSize: '14px', fontWeight: 600 }}>📈 Real-Time Performance Monitor</h3>
+                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                    <label style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={perfAutoRefresh}
+                        onChange={(e) => setPerfAutoRefresh(e.target.checked)}
+                      />
+                      Auto-refresh (5s)
+                    </label>
+                    <button
+                      onClick={loadPerfMetrics}
+                      disabled={perfLoading}
+                      style={{ padding: '4px 12px', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'none', color: 'var(--text-secondary)', fontSize: '11px', cursor: 'pointer' }}
+                    >
+                      {perfLoading ? '...' : '🔄 Refresh'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Stat Cards */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '10px' }}>
+                {[
+                  { label: 'Active Conns', value: perfMetrics?.active_connections ?? dbStats?.open_conns ?? '-', color: 'var(--accent)' },
+                  { label: 'Queries/sec', value: perfMetrics?.queries_per_sec?.toFixed(1) ?? '-', color: '#22c55e' },
+                  { label: 'Slow Queries', value: perfMetrics?.slow_queries ?? '-', color: '#eab308' },
+                  { label: 'Cache Hit Rate', value: perfMetrics?.cache_hit_rate ? `${(perfMetrics.cache_hit_rate * 100).toFixed(1)}%` : '-', color: '#a78bfa' },
+                  { label: 'Uptime', value: perfMetrics?.uptime || dbStats?.uptime || '-', color: 'var(--text-secondary)' },
+                  { label: 'DB Size', value: dbStats?.size_formatted || '-', color: 'var(--text-secondary)' },
+                ].map(card => (
+                  <div key={card.label} style={{ padding: '12px', backgroundColor: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)', textAlign: 'center' }}>
+                    <div style={{ fontSize: '22px', fontWeight: 700, color: card.color, fontFamily: 'monospace' }}>{card.value}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>{card.label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Sparkline Chart */}
+              {perfHistory.length > 1 && (
+                <div style={{ padding: '14px', backgroundColor: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
+                  <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '8px', color: 'var(--text-secondary)' }}>Queries/sec History (last {perfHistory.length} samples)</div>
+                  <svg width="100%" height="80" viewBox={`0 0 ${perfHistory.length * 20} 80`} preserveAspectRatio="none" style={{ display: 'block' }}>
+                    {(() => {
+                      const max = Math.max(...perfHistory, 1);
+                      const points = perfHistory.map((v, i) => `${i * 20},${80 - (v / max) * 70}`).join(' ');
+                      const areaPoints = `0,80 ${points} ${(perfHistory.length - 1) * 20},80`;
+                      return (
+                        <>
+                          <polygon points={areaPoints} fill="rgba(99,102,241,0.15)" />
+                          <polyline points={points} fill="none" stroke="var(--accent)" strokeWidth="2" />
+                          {perfHistory.map((v, i) => (
+                            <circle key={i} cx={i * 20} cy={80 - (v / max) * 70} r="3" fill="var(--accent)" />
+                          ))}
+                        </>
+                      );
+                    })()}
+                  </svg>
+                </div>
+              )}
+
+              {/* Active Processes */}
+              <div style={{ padding: '14px', backgroundColor: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)', flex: 1 }}>
+                <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '8px' }}>Active Processes ({activeProcesses.length})</div>
+                {activeProcesses.length === 0 ? (
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'center', padding: '20px' }}>No active processes</div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px' }}>
+                      <thead>
+                        <tr>
+                          {['ID', 'User', 'Host', 'DB', 'Command', 'Time (s)', 'State', 'Query'].map(h => (
+                            <th key={h} style={{ padding: '4px 6px', borderBottom: '1px solid var(--border-color)', textAlign: 'left', color: 'var(--text-secondary)', fontWeight: 600 }}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {activeProcesses.map((p: any, i: number) => (
+                          <tr key={i} style={{ backgroundColor: (p.time_sec || 0) > 5 ? 'rgba(239,68,68,0.1)' : 'transparent' }}>
+                            <td style={{ padding: '3px 6px', borderBottom: '1px solid var(--border-color)', fontFamily: 'monospace' }}>{p.id}</td>
+                            <td style={{ padding: '3px 6px', borderBottom: '1px solid var(--border-color)' }}>{p.user}</td>
+                            <td style={{ padding: '3px 6px', borderBottom: '1px solid var(--border-color)' }}>{p.host}</td>
+                            <td style={{ padding: '3px 6px', borderBottom: '1px solid var(--border-color)' }}>{p.database}</td>
+                            <td style={{ padding: '3px 6px', borderBottom: '1px solid var(--border-color)' }}>{p.command}</td>
+                            <td style={{ padding: '3px 6px', borderBottom: '1px solid var(--border-color)', fontFamily: 'monospace', color: (p.time_sec || 0) > 5 ? 'var(--danger)' : 'inherit' }}>{p.time_sec}</td>
+                            <td style={{ padding: '3px 6px', borderBottom: '1px solid var(--border-color)' }}>{p.state}</td>
+                            <td style={{ padding: '3px 6px', borderBottom: '1px solid var(--border-color)', fontFamily: 'monospace', maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.query}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </div>
           )}

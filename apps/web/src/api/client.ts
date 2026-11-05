@@ -171,4 +171,48 @@ export const api = {
     request<any>('/qa/benchmark', { method: 'POST', body: JSON.stringify(data) }),
   probeLiveMonitor: (data: { url: string }) =>
     request<any>('/monitor/probe', { method: 'POST', body: JSON.stringify(data) }),
+
+  // === NEW: Database Management Endpoints ===
+  exportTableData: (connectionId: string, table: string, format: string, where?: string, limit?: number) =>
+    request<any>('/db/export', { method: 'POST', body: JSON.stringify({ connection_id: connectionId, table, format, where: where || '', limit: limit || 1000 }) }),
+  importTableData: (connectionId: string, table: string, format: string, data: string) =>
+    request<any>('/db/import', { method: 'POST', body: JSON.stringify({ connection_id: connectionId, table, format, data }) }),
+  generateMigration: (sourceConnId: string, targetConnId: string) =>
+    request<any>('/db/migration/generate', { method: 'POST', body: JSON.stringify({ source_connection_id: sourceConnId, target_connection_id: targetConnId }) }),
+  getSavedQueries: (connectionId?: string) =>
+    request<any[]>(`/db/query/saved${connectionId ? `?connection_id=${encodeURIComponent(connectionId)}` : ''}`),
+  saveQuery: (data: { name: string; sql: string; connection_id?: string }) =>
+    request<any>('/db/query/saved', { method: 'POST', body: JSON.stringify(data) }),
+  deleteSavedQuery: (id: string) =>
+    request<any>(`/db/query/saved/${id}`, { method: 'DELETE' }),
+  compareSchemas: (leftConnId: string, rightConnId: string) =>
+    request<any>('/db/compare', { method: 'POST', body: JSON.stringify({ left_connection_id: leftConnId, right_connection_id: rightConnId }) }),
+  getRealtimeMetrics: (connectionId: string) =>
+    request<any>(`/db/monitor/realtime?connection_id=${encodeURIComponent(connectionId)}`),
+
+  // === NEW: Enhanced QA Endpoints ===
+  runQAContractTest: (data: { base_url: string; spec_url?: string; spec_format?: string; spec_content?: string }) =>
+    request<any>('/qa/contract', { method: 'POST', body: JSON.stringify(data) }),
+  runQARegression: (data: { base_url: string; suite_name: string; snapshots?: any[] }) =>
+    request<any>('/qa/regression', { method: 'POST', body: JSON.stringify(data) }),
+  runQASnapshot: (data: { url: string; name: string }) =>
+    request<any>('/qa/snapshot', { method: 'POST', body: JSON.stringify(data) }),
+  compareQASnapshots: (data: { baseline_id: string; current_id: string }) =>
+    request<any>('/qa/snapshot/compare', { method: 'POST', body: JSON.stringify(data) }),
+  getQAHistory: (suiteType?: string) =>
+    request<any[]>(`/qa/history${suiteType ? `?suite_type=${suiteType}` : ''}`),
+  getQAAuditDossier: (data: { base_url: string; project_path?: string }) =>
+    request<any>('/qa/dossier', { method: 'POST', body: JSON.stringify(data) }),
+  runQAEnvironmentMatrix: (data: { base_url: string; environments: Array<{ name: string; base_url: string }> }) =>
+    request<any>('/qa/environment-matrix', { method: 'POST', body: JSON.stringify(data) }),
+
+  // === NEW: AI QA Studio Endpoints ===
+  runVisualQA: (data: { url: string; checks?: string[] }) =>
+    request<any>('/qa/visual', { method: 'POST', body: JSON.stringify(data) }),
+  applyQAFix: (data: { file_path: string; original_code: string; fixed_code: string; preview_only?: boolean }) =>
+    request<any>('/qa/fix/apply', { method: 'POST', body: JSON.stringify(data) }),
+  getQAChecklist: () =>
+    request<any>('/qa/checklist'),
+  saveQAChecklist: (data: { items: any[] }) =>
+    request<any>('/qa/checklist', { method: 'POST', body: JSON.stringify(data) }),
 };

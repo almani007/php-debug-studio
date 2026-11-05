@@ -53,10 +53,24 @@ func main() {
 		})
 	})
 
+	// Initialize TraceManager for auto-step line tracing
+	traceManager := dbgp.NewTraceManager(func(recording *dbgp.TraceRecording, step *dbgp.TraceStep) {
+		// Broadcast each trace step in real-time via WebSocket
+		hub.Broadcast("trace_step", recording.ProjectID, map[string]interface{}{
+			"trace_id":   recording.ID,
+			"session_id": recording.SessionID,
+			"step":       step,
+			"step_count": len(recording.Steps),
+			"status":     recording.Status,
+		})
+	})
+	dbgpListener.SetTraceManager(traceManager)
+
 	if err := dbgpListener.Start(); err != nil {
 		log.Printf("Warning: DBGp listener failed to start on %s: %v", dbgpAddr, err)
 	} else {
 		log.Printf("DBGp Xdebug listener active on %s", dbgpAddr)
+		log.Printf("Line Trace mode available - auto-step through code without breakpoints")
 		defer dbgpListener.Close()
 	}
 

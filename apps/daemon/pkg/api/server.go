@@ -223,6 +223,12 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/qa/fuzz", s.handleQAFuzz)
 	s.mux.HandleFunc("/v1/qa/benchmark", s.handleQABenchmark)
 
+	// Enhanced QA & DB Management routes
+	s.registerEnhancedRoutes()
+
+	// Line Trace Mode - auto-step through every line without breakpoints
+	s.registerTraceRoutes()
+
 	// Live Project Monitor & Security Guard
 	s.mux.HandleFunc("/v1/monitor/probe", s.handleMonitorProbe)
 
