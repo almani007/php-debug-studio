@@ -50,13 +50,29 @@ type DebugSession struct {
 	mutex        sync.Mutex
 }
 
+// BreakpointInfo describes a breakpoint to inject into Xdebug.
+type BreakpointInfo struct {
+	ID         string `json:"id"`
+	FileURI    string `json:"file_uri"`
+	LineNumber int    `json:"line_number"`
+	Type       string `json:"type"`
+	Condition  string `json:"condition,omitempty"`
+}
+
+// BreakpointResolver returns breakpoints that match a given file URI.
+type BreakpointResolver func(fileURI string) []BreakpointInfo
+
 type Listener struct {
-	address      string
-	listener     net.Listener
-	sessions     map[string]*DebugSession
-	mutex        sync.RWMutex
-	onEvent      func(session *DebugSession, event string)
-	traceManager *TraceManager
+	address         string
+	listener        net.Listener
+	sessions        map[string]*DebugSession
+	mutex           sync.RWMutex
+	onEvent         func(session *DebugSession, event string)
+	traceManager    *TraceManager
+	autoRun         bool
+	autoRunMutex    sync.RWMutex
+	breakpointResolver BreakpointResolver
+	breakpointMutex   sync.RWMutex
 }
 
 func NewListener(address string, onEvent func(session *DebugSession, event string)) *Listener {
@@ -67,9 +83,46 @@ func NewListener(address string, onEvent func(session *DebugSession, event strin
 		address:  address,
 		sessions: make(map[string]*DebugSession),
 		onEvent:  onEvent,
+		// By default a freshly connected Xdebug session is resumed
+		// immediately. This makes Xdebug usable without any breakpoints
+		// and prevents web requests from hanging at the first line.
+		autoRun: true,
 	}
 	// TraceManager is set externally via SetTraceManager
 	return l
+}
+
+// SetAutoRun controls whether new DBGp sessions are resumed automatically.
+func (l *Listener) SetAutoRun(enabled bool) {
+	l.autoRunMutex.Lock()
+	l.autoRun = enabled
+	l.autoRunMutex.Unlock()
+}
+
+// AutoRun reports whether new DBGp sessions are resumed automatically.
+func (l *Listener) AutoRun() bool {
+	l.autoRunMutex.RLock()
+	defer l.autoRunMutex.RUnlock()
+	return l.autoRun
+}
+
+// SetBreakpointResolver sets a callback that provides breakpoints to inject
+// into Xdebug when a session connects. The resolver receives the session's
+// file URI and returns matching breakpoints.
+func (l *Listener) SetBreakpointResolver(resolver BreakpointResolver) {
+	l.breakpointMutex.Lock()
+	l.breakpointResolver = resolver
+	l.breakpointMutex.Unlock()
+}
+
+// resolveBreakpoints returns breakpoints matching the given file URI.
+func (l *Listener) resolveBreakpoints(fileURI string) []BreakpointInfo {
+	l.breakpointMutex.RLock()
+	defer l.breakpointMutex.RUnlock()
+	if l.breakpointResolver == nil {
+		return nil
+	}
+	return l.breakpointResolver(fileURI)
 }
 
 func (l *Listener) SetTraceManager(tm *TraceManager) {
@@ -191,7 +244,7 @@ func (l *Listener) handleConnection(conn net.Conn) {
 
 		// Initial init packet negotiation
 		if bytes.Contains(payload, []byte("<init")) {
-			session.State = StateBreak
+			session.State = StateStarting
 			if m := reFile.FindStringSubmatch(str); len(m) > 1 {
 				session.FileURI = m[1]
 			}
@@ -201,7 +254,26 @@ func (l *Listener) handleConnection(conn net.Conn) {
 			// Negotiate DBGp features
 			_ = session.SendCommand("feature_set -n max_depth -v 3")
 			_ = session.SendCommand("feature_set -n max_children -v 32")
-			_ = session.SendCommand("step_into")
+
+			// Inject any automatic breakpoints that match this file before
+			// resuming, so the first request breaks at the right place.
+			if l.breakpointResolver != nil {
+				for _, bp := range l.resolveBreakpoints(session.FileURI) {
+					_ = session.SendCommand(fmt.Sprintf(
+						"breakpoint_set -t %s -f %s -n %d",
+						bp.Type, bp.FileURI, bp.LineNumber,
+					))
+				}
+			}
+
+			if l.AutoRun() {
+				// Resume immediately: no breakpoints are required for the
+				// application to keep working while the session is observed.
+				session.State = StateRunning
+				_ = session.SendCommand("run")
+			} else {
+				_ = session.SendCommand("step_into")
+			}
 			continue
 		}
 
@@ -249,6 +321,10 @@ func (l *Listener) handleConnection(conn net.Conn) {
 						l.onEvent(session, "trace_completed")
 					}
 				}
+				// DBGp requires the debugger to acknowledge a "stopping"
+				// status with a stop command. Without this the PHP process
+				// blocks until the connection times out (or forever).
+				_ = session.SendCommand("stop")
 			case "stopped":
 				session.State = StateStopped
 			}

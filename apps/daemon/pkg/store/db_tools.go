@@ -261,7 +261,7 @@ func buildDSN(driver string, config map[string]interface{}, readonly bool) (stri
 		if db, ok := config["database"].(string); ok {
 			database = db
 		}
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local&timeout=5s",
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local&timeout=5s&allowNativePasswords=true",
 			user, password, host, port, database)
 		return "mysql", dsn
 
@@ -328,11 +328,11 @@ func openTargetDB(sqlDriver, dsn string) (*sql.DB, error) {
 func (s *Store) resolveConnectionDB(connID string) (*sql.DB, string, string, bool, error) {
 	if connID == "" || connID == "default" {
 		dbPath := "./debug_studio.sqlite"
-		targetDB, err := openTargetDB("sqlite3", "file:"+dbPath+"?mode=ro&cache=shared")
+		targetDB, err := openAndPingDB("sqlite3", dbPath)
 		if err != nil {
-			targetDB, err = openTargetDB("sqlite3", dbPath)
+			return nil, "sqlite", dbPath, true, fmt.Errorf("failed to open default SQLite database at %s: %w", dbPath, err)
 		}
-		return targetDB, "sqlite", dbPath, true, err
+		return targetDB, "sqlite", dbPath, false, nil
 	}
 
 	var name, driver, configJSON string
@@ -341,12 +341,7 @@ func (s *Store) resolveConnectionDB(connID string) (*sql.DB, string, string, boo
 		Scan(&name, &driver, &configJSON, &readonlyInt)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			dbPath := "./debug_studio.sqlite"
-			targetDB, err := openTargetDB("sqlite3", "file:"+dbPath+"?mode=ro&cache=shared")
-			if err != nil {
-				targetDB, err = openTargetDB("sqlite3", dbPath)
-			}
-			return targetDB, "sqlite", dbPath, true, err
+			return nil, "", "", false, fmt.Errorf("database connection not found: %s", connID)
 		}
 		return nil, "", "", false, err
 	}
@@ -356,10 +351,32 @@ func (s *Store) resolveConnectionDB(connID string) (*sql.DB, string, string, boo
 	_ = json.Unmarshal([]byte(configJSON), &config)
 
 	sqlDriver, dsn := buildDSN(driver, config, isReadonly)
-	targetDB, err := openTargetDB(sqlDriver, dsn)
-	if err != nil && driver == "sqlite" && isReadonly {
-		// Fallback to writable handle if ro mode fails
-		targetDB, err = openTargetDB("sqlite3", dsn)
+
+	var targetDB *sql.DB
+	// Try up to 3 times with backoff for transient connection issues
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		targetDB, lastErr = openAndPingDB(sqlDriver, dsn)
+		if lastErr == nil {
+			break
+		}
+		if attempt < 2 {
+			time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond)
+		}
+	}
+
+	if lastErr != nil {
+		// Build a helpful error message based on the driver
+		hint := ""
+		switch strings.ToLower(driver) {
+		case "mysql", "mariadb":
+			hint = " Ensure MySQL/MariaDB is running at the configured host:port. Check config_json for host, port, user, password, database."
+		case "postgres", "postgresql":
+			hint = " Ensure PostgreSQL is running at the configured host:port. Check config_json for host, port, user, password, database, sslmode."
+		case "sqlite", "sqlite3":
+			hint = " Ensure the SQLite file path exists and is writable. Check config_json for path."
+		}
+		return nil, driver, "", isReadonly, fmt.Errorf("failed to connect to %s database '%s': %w%s", driver, name, lastErr, hint)
 	}
 
 	dbIdentifier := name
@@ -369,7 +386,29 @@ func (s *Store) resolveConnectionDB(connID string) (*sql.DB, string, string, boo
 		dbIdentifier = d
 	}
 
-	return targetDB, driver, dbIdentifier, isReadonly, err
+	return targetDB, driver, dbIdentifier, isReadonly, nil
+}
+
+// openAndPingDB opens a database handle and verifies connectivity with Ping.
+// sql.Open is lazy and doesn't establish a connection, so we must Ping to validate.
+func openAndPingDB(driverName, dsn string) (*sql.DB, error) {
+	db, err := sql.Open(driverName, dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(5)
+	db.SetMaxIdleConns(2)
+	db.SetConnMaxLifetime(2 * time.Minute)
+
+	// Ping to actually establish the connection and catch configuration errors early
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	return db, nil
 }
 
 // ExecuteSafeQuery executes a query with optional mutation mode, timeout, row caps, and metadata extraction
@@ -918,6 +957,17 @@ func (s *Store) TestDBConnection(conn DBConnection) (*ConnectionTestResult, erro
 	}, nil
 }
 
+// quoteIdent returns a driver-appropriate quoted identifier.
+// MySQL/MariaDB use backticks, SQLite/PostgreSQL use double quotes.
+func quoteIdent(driver, name string) string {
+	switch strings.ToLower(driver) {
+	case "mysql", "mariadb":
+		return "`" + name + "`"
+	default:
+		return "\"" + name + "\""
+	}
+}
+
 // GetTableData returns paginated, sortable rows for a table
 func (s *Store) GetTableData(connID, tableName string, page, pageSize int, sortCol, sortDir, filter string) (*TableDataResult, error) {
 	if pageSize <= 0 || pageSize > 500 {
@@ -985,7 +1035,7 @@ func (s *Store) GetTableData(connID, tableName string, page, pageSize int, sortC
 
 	if len(validCols) == 0 {
 		// Fallback sample query to extract columns
-		sampleRows, err := targetDB.Query(fmt.Sprintf(`SELECT * FROM "%s" LIMIT 1`, cleanTable))
+		sampleRows, err := targetDB.Query(fmt.Sprintf(`SELECT * FROM %s LIMIT 1`, quoteIdent(driver, cleanTable)))
 		if err != nil {
 			return nil, fmt.Errorf("failed to inspect table: %w", err)
 		}
@@ -1004,13 +1054,13 @@ func (s *Store) GetTableData(connID, tableName string, page, pageSize int, sortC
 
 	// Count total rows
 	var totalRows int64
-	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM "%s"`, cleanTable)
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM %s`, quoteIdent(driver, cleanTable))
 	var countArgs []interface{}
 
 	var whereClauses []string
 	if strings.TrimSpace(filter) != "" {
 		for _, col := range validCols {
-			whereClauses = append(whereClauses, fmt.Sprintf(`CAST("%s" AS TEXT) LIKE ?`, col))
+			whereClauses = append(whereClauses, fmt.Sprintf(`CAST(%s AS TEXT) LIKE ?`, quoteIdent(driver, col)))
 			countArgs = append(countArgs, "%"+filter+"%")
 		}
 	}
@@ -1022,7 +1072,7 @@ func (s *Store) GetTableData(connID, tableName string, page, pageSize int, sortC
 	_ = targetDB.QueryRow(countQuery, countArgs...).Scan(&totalRows)
 
 	// Build select query
-	query := fmt.Sprintf(`SELECT * FROM "%s"`, cleanTable)
+	query := fmt.Sprintf(`SELECT * FROM %s`, quoteIdent(driver, cleanTable))
 	var queryArgs []interface{}
 	if len(whereClauses) > 0 {
 		query += " WHERE " + strings.Join(whereClauses, " OR ")
@@ -1043,10 +1093,10 @@ func (s *Store) GetTableData(connID, tableName string, page, pageSize int, sortC
 			if strings.ToUpper(sortDir) == "DESC" {
 				dir = "DESC"
 			}
-			query += fmt.Sprintf(` ORDER BY "%s" %s`, sortCol, dir)
+			query += fmt.Sprintf(` ORDER BY %s %s`, quoteIdent(driver, sortCol), dir)
 		}
 	} else if primaryKey != "" {
-		query += fmt.Sprintf(` ORDER BY "%s" DESC`, primaryKey)
+		query += fmt.Sprintf(` ORDER BY %s DESC`, quoteIdent(driver, primaryKey))
 	}
 
 	offset := (page - 1) * pageSize
@@ -1106,7 +1156,7 @@ func (s *Store) GetTableData(connID, tableName string, page, pageSize int, sortC
 
 // InsertTableRow inserts a new row into the specified table
 func (s *Store) InsertTableRow(connID, tableName string, data map[string]interface{}) (int64, error) {
-	targetDB, _, _, isReadonly, err := s.resolveConnectionDB(connID)
+	targetDB, driver, _, isReadonly, err := s.resolveConnectionDB(connID)
 	if err != nil {
 		return 0, err
 	}
@@ -1130,7 +1180,7 @@ func (s *Store) InsertTableRow(connID, tableName string, data map[string]interfa
 		if cleanCol == "" {
 			continue
 		}
-		cols = append(cols, fmt.Sprintf(`"%s"`, cleanCol))
+		cols = append(cols, quoteIdent(driver, cleanCol))
 		placeholders = append(placeholders, "?")
 		args = append(args, v)
 	}
@@ -1139,8 +1189,8 @@ func (s *Store) InsertTableRow(connID, tableName string, data map[string]interfa
 		return 0, fmt.Errorf("no valid column data provided")
 	}
 
-	query := fmt.Sprintf(`INSERT INTO "%s" (%s) VALUES (%s)`,
-		cleanTable, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
+	query := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s)`,
+		quoteIdent(driver, cleanTable), strings.Join(cols, ", "), strings.Join(placeholders, ", "))
 
 	res, err := targetDB.Exec(query, args...)
 	if err != nil {
@@ -1152,7 +1202,7 @@ func (s *Store) InsertTableRow(connID, tableName string, data map[string]interfa
 
 // UpdateTableRow updates a specific row by its primary key
 func (s *Store) UpdateTableRow(connID, tableName, pkCol string, pkVal interface{}, updates map[string]interface{}) (int64, error) {
-	targetDB, _, _, isReadonly, err := s.resolveConnectionDB(connID)
+	targetDB, driver, _, isReadonly, err := s.resolveConnectionDB(connID)
 	if err != nil {
 		return 0, err
 	}
@@ -1176,7 +1226,7 @@ func (s *Store) UpdateTableRow(connID, tableName, pkCol string, pkVal interface{
 		if cleanCol == "" || cleanCol == cleanPKCol {
 			continue
 		}
-		setClauses = append(setClauses, fmt.Sprintf(`"%s" = ?`, cleanCol))
+		setClauses = append(setClauses, fmt.Sprintf("%s = ?", quoteIdent(driver, cleanCol)))
 		args = append(args, v)
 	}
 
@@ -1185,8 +1235,63 @@ func (s *Store) UpdateTableRow(connID, tableName, pkCol string, pkVal interface{
 	}
 
 	args = append(args, pkVal)
-	query := fmt.Sprintf(`UPDATE "%s" SET %s WHERE "%s" = ?`,
-		cleanTable, strings.Join(setClauses, ", "), cleanPKCol)
+	query := fmt.Sprintf(`UPDATE %s SET %s WHERE %s = ?`,
+		quoteIdent(driver, cleanTable), strings.Join(setClauses, ", "), quoteIdent(driver, cleanPKCol))
+
+	res, err := targetDB.Exec(query, args...)
+	if err != nil {
+		return 0, err
+	}
+
+	return res.RowsAffected()
+}
+
+// BulkUpdateTableRow updates multiple rows matching a WHERE clause across columns
+func (s *Store) BulkUpdateTableRow(connID, tableName string, updates map[string]interface{}, whereCol string, whereVal interface{}, whereOp string) (int64, error) {
+	targetDB, driver, _, isReadonly, err := s.resolveConnectionDB(connID)
+	if err != nil {
+		return 0, err
+	}
+	defer targetDB.Close()
+
+	if isReadonly {
+		return 0, fmt.Errorf("database connection is set to read-only")
+	}
+
+	cleanTable := regexp.MustCompile(`^[a-zA-Z0-9_]+$`).FindString(tableName)
+	cleanWhereCol := regexp.MustCompile(`^[a-zA-Z0-9_]+$`).FindString(whereCol)
+	if cleanTable == "" || cleanWhereCol == "" {
+		return 0, fmt.Errorf("invalid table or where column name")
+	}
+
+	// Normalize operator
+	op := "="
+	switch strings.ToUpper(whereOp) {
+	case "=", "!=", ">", "<", ">=", "<=", "LIKE":
+		op = strings.ToUpper(whereOp)
+	default:
+		op = "="
+	}
+
+	var setClauses []string
+	var args []interface{}
+
+	for k, v := range updates {
+		cleanCol := regexp.MustCompile(`^[a-zA-Z0-9_]+$`).FindString(k)
+		if cleanCol == "" {
+			continue
+		}
+		setClauses = append(setClauses, fmt.Sprintf("%s = ?", quoteIdent(driver, cleanCol)))
+		args = append(args, v)
+	}
+
+	if len(setClauses) == 0 {
+		return 0, fmt.Errorf("no columns to update")
+	}
+
+	args = append(args, whereVal)
+	query := fmt.Sprintf(`UPDATE %s SET %s WHERE %s %s ?`,
+		quoteIdent(driver, cleanTable), strings.Join(setClauses, ", "), quoteIdent(driver, cleanWhereCol), op)
 
 	res, err := targetDB.Exec(query, args...)
 	if err != nil {
@@ -1198,7 +1303,7 @@ func (s *Store) UpdateTableRow(connID, tableName, pkCol string, pkVal interface{
 
 // DeleteTableRow deletes a specific row by its primary key
 func (s *Store) DeleteTableRow(connID, tableName, pkCol string, pkVal interface{}) (int64, error) {
-	targetDB, _, _, isReadonly, err := s.resolveConnectionDB(connID)
+	targetDB, driver, _, isReadonly, err := s.resolveConnectionDB(connID)
 	if err != nil {
 		return 0, err
 	}
@@ -1214,7 +1319,8 @@ func (s *Store) DeleteTableRow(connID, tableName, pkCol string, pkVal interface{
 		return 0, fmt.Errorf("invalid table or primary key name")
 	}
 
-	query := fmt.Sprintf(`DELETE FROM "%s" WHERE "%s" = ?`, cleanTable, cleanPKCol)
+	query := fmt.Sprintf(`DELETE FROM %s WHERE %s = ?`,
+		quoteIdent(driver, cleanTable), quoteIdent(driver, cleanPKCol))
 	res, err := targetDB.Exec(query, pkVal)
 	if err != nil {
 		return 0, err
@@ -1241,20 +1347,20 @@ func (s *Store) TruncateTable(connID, tableName string) error {
 	}
 
 	if strings.ToLower(driver) == "sqlite" {
-		_, err = targetDB.Exec(fmt.Sprintf(`DELETE FROM "%s"`, cleanTable))
+		_, err = targetDB.Exec(fmt.Sprintf(`DELETE FROM %s`, quoteIdent(driver, cleanTable)))
 		if err == nil {
 			_, _ = targetDB.Exec(`VACUUM`)
 		}
 		return err
 	}
 
-	_, err = targetDB.Exec(fmt.Sprintf(`TRUNCATE TABLE "%s"`, cleanTable))
+	_, err = targetDB.Exec(fmt.Sprintf(`TRUNCATE TABLE %s`, quoteIdent(driver, cleanTable)))
 	return err
 }
 
 // DropTable drops a table
 func (s *Store) DropTable(connID, tableName string) error {
-	targetDB, _, _, isReadonly, err := s.resolveConnectionDB(connID)
+	targetDB, driver, _, isReadonly, err := s.resolveConnectionDB(connID)
 	if err != nil {
 		return err
 	}
@@ -1269,7 +1375,7 @@ func (s *Store) DropTable(connID, tableName string) error {
 		return fmt.Errorf("invalid table name")
 	}
 
-	_, err = targetDB.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS "%s"`, cleanTable))
+	_, err = targetDB.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS %s`, quoteIdent(driver, cleanTable)))
 	return err
 }
 

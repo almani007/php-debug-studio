@@ -58,7 +58,7 @@ export const DatabaseStudioView: React.FC<DatabaseStudioViewProps> = ({
 }) => {
   // Navigation & View Mode
   const [activeTab, setActiveTab] = useState<
-    'grid' | 'structure' | 'console' | 'erd' | 'explain' | 'advisor' | 'analytics' | 'maintenance' | 'connections' | 'export' | 'import' | 'migration' | 'saved' | 'compare' | 'perfmon'
+    'grid' | 'structure' | 'console' | 'erd' | 'explain' | 'advisor' | 'analytics' | 'live' | 'maintenance' | 'connections' | 'export' | 'import' | 'migration' | 'saved' | 'compare' | 'perfmon'
   >('grid');
 
   // Connections state
@@ -144,6 +144,15 @@ export const DatabaseStudioView: React.FC<DatabaseStudioViewProps> = ({
   const [sqlAnalytics, setSqlAnalytics] = useState<any[]>([]);
   const [analyticsFilter, setAnalyticsFilter] = useState<'all' | 'slow' | 'frequent'>('all');
   const [analyticsSearch, setAnalyticsSearch] = useState<string>('');
+
+  // Live application query capture
+  const [liveQueries, setLiveQueries] = useState<any[]>([]);
+  const [liveStatus, setLiveStatus] = useState<any>(null);
+  const [liveConnected, setLiveConnected] = useState<boolean>(false);
+  const [liveSearch, setLiveSearch] = useState<string>('');
+  const [liveBusy, setLiveBusy] = useState<boolean>(false);
+  const [liveExpanded, setLiveExpanded] = useState<string | null>(null);
+  const [livePaused, setLivePaused] = useState<boolean>(false);
 
   // Maintenance & Stats State
   const [dbStats, setDbStats] = useState<any | null>(null);
@@ -360,19 +369,34 @@ export const DatabaseStudioView: React.FC<DatabaseStudioViewProps> = ({
     loadAdvisorFindings();
   }, [selectedProjectId]);
 
-  // 2. Load schema when connection changes
+  // 2. Load schema when connection changes - reset stale table state first
   useEffect(() => {
+    setSelectedTable('');
+    setSchema(null);
+    setTableData(null);
+    setTableDDL('');
     loadSchema(selectedConnId);
     loadStats(selectedConnId);
   }, [selectedConnId]);
 
-  // 3. Load table data when selected table changes
+  // 2b. Auto-select the first table whenever a fresh schema arrives and
+  // no table is selected yet (e.g. after switching connections).
   useEffect(() => {
-    if (selectedTable) {
-      loadTableData(selectedConnId, selectedTable, 1);
-      loadTableDDL(selectedConnId, selectedTable);
+    if (schema?.tables?.length && !selectedTable) {
+      setSelectedTable(schema.tables[0].name);
     }
-  }, [selectedTable, selectedConnId]);
+  }, [schema, selectedTable]);
+
+  // 3. Load table data when selected table changes. Only query tables that
+  // actually exist in the current schema so a connection switch can never
+  // fire requests for a table left over from the previous database.
+  useEffect(() => {
+    if (!selectedTable) return;
+    const exists = schema?.tables?.some((t: any) => t.name === selectedTable);
+    if (!exists) return;
+    loadTableData(selectedConnId, selectedTable, 1);
+    loadTableDDL(selectedConnId, selectedTable);
+  }, [selectedTable, selectedConnId, schema]);
 
 
   // === NEW: Performance Monitor auto-refresh ===
@@ -485,6 +509,80 @@ export const DatabaseStudioView: React.FC<DatabaseStudioViewProps> = ({
       console.error('Failed to load SQL analytics:', err);
     }
   };
+
+  // ── Live application SQL capture ──────────────────────────────────────
+  const loadLiveSQL = async () => {
+    try {
+      const data = await api.getLiveSQLStatus(selectedProjectId);
+      setLiveStatus(data?.status || null);
+      if (data?.queries?.length) {
+        setLiveQueries((prev) => {
+          const seen = new Set(prev.map((q: any) => q.id));
+          const incoming = data.queries.filter((q: any) => !seen.has(q.id));
+          return [...incoming, ...prev].slice(0, 1000);
+        });
+      }
+    } catch (err: any) {
+      console.error('Failed to load live SQL status:', err);
+    }
+  };
+
+  const toggleLiveCapture = async () => {
+    setLiveBusy(true);
+    try {
+      if (liveStatus?.running) {
+        await api.stopLiveSQL();
+      } else {
+        await api.startLiveSQL(selectedProjectId);
+      }
+      await loadLiveSQL();
+    } catch (err: any) {
+      alert(`Live SQL capture failed: ${err.message}`);
+    } finally {
+      setLiveBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    loadLiveSQL();
+    let ws: WebSocket | null = null;
+    try {
+      ws = new WebSocket('ws://127.0.0.1:8765/v1/events/stream');
+      ws.onopen = () => setLiveConnected(true);
+      ws.onclose = () => setLiveConnected(false);
+      ws.onerror = () => setLiveConnected(false);
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg?.type === 'sql_query' && msg.payload) {
+            if (msg.project_id && selectedProjectId && msg.project_id !== selectedProjectId) return;
+            if (livePaused) return;
+            setLiveQueries((prev) => [msg.payload, ...prev].slice(0, 1000));
+            setLiveStatus((prev: any) => ({
+              ...(prev || {}),
+              running: true,
+              captured: (prev?.captured || 0) + 1,
+              last_event: msg.payload.timestamp,
+            }));
+          } else if (msg?.type === 'sql_capture_started' && msg.payload) {
+            setLiveStatus(msg.payload);
+          }
+        } catch {
+          /* ignore malformed frames */
+        }
+      };
+    } catch {
+      setLiveConnected(false);
+    }
+    return () => {
+      if (ws) ws.close();
+    };
+  }, [selectedProjectId, livePaused]);
+
+  useEffect(() => {
+    if (activeTab === 'live') loadLiveSQL();
+  }, [activeTab]);
+
 
   const loadAdvisorFindings = async () => {
     if (!selectedProjectId) return;
@@ -1063,6 +1161,7 @@ export const DatabaseStudioView: React.FC<DatabaseStudioViewProps> = ({
               { id: 'explain', label: '🔍 Safe EXPLAIN', icon: Zap },
               { id: 'advisor', label: `💡 Solution Advisor (${findings.length})`, icon: Sparkles },
               { id: 'analytics', label: `📊 Live Traces (${sqlAnalytics.length})`, icon: BarChart2 },
+              { id: 'live', label: `🔴 Live Queries (${liveQueries.length})`, icon: Activity },
               { id: 'maintenance', label: '🛠️ Maintenance & Ops', icon: Activity },
               { id: 'connections', label: '🔌 Connections', icon: Database },
               { id: 'export', label: '📤 Data Export', icon: Download },
@@ -2285,6 +2384,205 @@ export const DatabaseStudioView: React.FC<DatabaseStudioViewProps> = ({
                   </div>
                 ))
               )}
+            </div>
+          )}
+
+          {/* =========================================================================
+              TAB 7: LIVE APPLICATION QUERY CAPTURE
+          ========================================================================= */}
+          {activeTab === 'live' && (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '8px' }}>
+              {/* Capture status bar */}
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap',
+                backgroundColor: 'var(--bg-card)', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--border-color)'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '3px 9px', borderRadius: '999px',
+                    fontSize: '11px', fontWeight: 700,
+                    backgroundColor: liveStatus?.running ? 'rgba(63,185,80,0.15)' : 'rgba(210,153,34,0.15)',
+                    color: liveStatus?.running ? 'var(--success)' : '#d29922',
+                    border: `1px solid ${liveStatus?.running ? 'rgba(63,185,80,0.4)' : 'rgba(210,153,34,0.4)'}`
+                  }}>
+                    <span style={{
+                      width: 7, height: 7, borderRadius: '50%',
+                      backgroundColor: liveStatus?.running ? 'var(--success)' : '#d29922',
+                      boxShadow: liveStatus?.running ? '0 0 6px rgba(63,185,80,0.6)' : 'none'
+                    }} />
+                    {liveStatus?.running ? (livePaused ? 'CAPTURE PAUSED' : 'LIVE CAPTURE ON') : 'CAPTURE OFF'}
+                  </span>
+                  {liveStatus?.container && (
+                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
+                      🐳 {liveStatus.container} · {liveStatus.host}:{liveStatus.port} · {liveStatus.database || 'all databases'}
+                    </span>
+                  )}
+                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                    <strong style={{ color: 'var(--text-primary)' }}>{liveStatus?.captured ?? liveQueries.length}</strong> statements captured
+                  </span>
+                  <span style={{ fontSize: '10px', color: liveConnected ? 'var(--success)' : 'var(--text-secondary)' }}>
+                    {liveConnected ? '● stream connected' : '○ stream offline'}
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                  <input
+                    type="text"
+                    placeholder="Filter SQL…"
+                    value={liveSearch}
+                    onChange={(e) => setLiveSearch(e.target.value)}
+                    style={{
+                      padding: '4px 8px', borderRadius: '4px', border: '1px solid var(--border-color)',
+                      backgroundColor: 'var(--bg-main)', color: 'var(--text-primary)', fontSize: '11px', width: '180px'
+                    }}
+                  />
+                  <button
+                    onClick={() => setLivePaused(!livePaused)}
+                    disabled={!liveStatus?.running}
+                    style={{
+                      padding: '4px 9px', borderRadius: '4px', border: '1px solid var(--border-color)',
+                      backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: '11px',
+                      cursor: liveStatus?.running ? 'pointer' : 'not-allowed', opacity: liveStatus?.running ? 1 : 0.5
+                    }}
+                  >
+                    {livePaused ? '▶ Resume' : '⏸ Pause'}
+                  </button>
+                  <button
+                    onClick={toggleLiveCapture}
+                    disabled={liveBusy}
+                    style={{
+                      padding: '4px 9px', borderRadius: '4px', border: '1px solid var(--accent)',
+                      backgroundColor: liveStatus?.running ? 'transparent' : 'var(--accent)',
+                      color: liveStatus?.running ? 'var(--accent)' : '#fff', fontSize: '11px',
+                      fontWeight: 600, cursor: liveBusy ? 'wait' : 'pointer', opacity: liveBusy ? 0.6 : 1
+                    }}
+                  >
+                    {liveBusy ? '…' : liveStatus?.running ? '■ Stop capture' : '⏺ Start capture'}
+                  </button>
+                  <button
+                    onClick={() => setLiveQueries([])}
+                    style={{
+                      padding: '4px 9px', borderRadius: '4px', border: '1px solid var(--border-color)',
+                      backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: '11px', cursor: 'pointer'
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+
+              {/* Error / help banner */}
+              {!liveStatus?.running && (
+                <div style={{
+                  padding: '10px 12px', borderRadius: '6px', fontSize: '12px',
+                  backgroundColor: 'rgba(210,153,34,0.08)', border: '1px solid rgba(210,153,34,0.35)', color: 'var(--text-secondary)'
+                }}>
+                  {liveStatus?.last_error
+                    ? `Capture error: ${liveStatus.last_error}`
+                    : 'Live capture is off. Start it to stream every SELECT / INSERT / UPDATE / DELETE the application executes against its MySQL database.'}
+                </div>
+              )}
+
+              {/* Query table */}
+              <div style={{ flex: 1, backgroundColor: 'var(--bg-card)', borderRadius: '6px', border: '1px solid var(--border-color)', overflow: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+                    <tr style={{ backgroundColor: 'var(--bg-main)', borderBottom: '1px solid var(--border-color)', textAlign: 'left' }}>
+                      <th style={{ padding: '8px 12px', width: '110px' }}>Time</th>
+                      <th style={{ padding: '8px 12px', width: '82px' }}>Type</th>
+                      <th style={{ padding: '8px 12px', width: '68px' }}>Thread</th>
+                      <th style={{ padding: '8px 12px' }}>SQL Statement</th>
+                      <th style={{ padding: '8px 12px', width: '78px' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {liveQueries.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} style={{ padding: '32px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                          {liveStatus?.running
+                            ? 'Listening… load a page of the application and its queries will appear here in real time.'
+                            : 'No captured statements yet. Start capture, then browse the application.'}
+                        </td>
+                      </tr>
+                    ) : (
+                      liveQueries
+                        .filter((q: any) => !liveSearch || (q.sql || '').toLowerCase().includes(liveSearch.toLowerCase()))
+                        .map((q: any, idx: number) => {
+                          const sql: string = q.sql || q.sql_template || '';
+                          const verb = (sql.trim().split(/\s+/)[0] || 'SQL').toUpperCase();
+                          const color = verb === 'SELECT' ? '#58a6ff' : verb === 'INSERT' ? '#3fb950' : verb === 'UPDATE' ? '#d29922' : verb === 'DELETE' ? '#f85149' : '#8b949e';
+                          const dt = q.timestamp ? new Date(q.timestamp) : null;
+                          const timeLabel = dt && !isNaN(dt.getTime())
+                            ? `${dt.toLocaleTimeString(undefined, { hour12: false })}.${String(dt.getMilliseconds()).padStart(3, '0')}`
+                            : '—';
+                          const expanded = liveExpanded === (q.id || String(idx));
+                          return (
+                            <React.Fragment key={q.id || idx}>
+                              <tr
+                                onClick={() => setLiveExpanded(expanded ? null : (q.id || String(idx)))}
+                                style={{ borderBottom: '1px solid var(--border-color)', cursor: 'pointer', backgroundColor: expanded ? 'var(--bg-main)' : 'transparent' }}
+                              >
+                                <td style={{ padding: '7px 12px', fontFamily: 'monospace', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{timeLabel}</td>
+                                <td style={{ padding: '7px 12px' }}>
+                                  <span style={{
+                                    fontSize: '10px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px',
+                                    color, backgroundColor: `${color}22`, border: `1px solid ${color}55`
+                                  }}>{verb}</span>
+                                </td>
+                                <td style={{ padding: '7px 12px', fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{q.thread_id ?? '—'}</td>
+                                <td style={{
+                                  padding: '7px 12px', fontFamily: 'monospace',
+                                  maxWidth: '720px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+                                }} title={sql}>{sql}</td>
+                                <td style={{ padding: '7px 12px' }}>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      navigator.clipboard?.writeText(sql);
+                                      setLiveExpanded(expanded ? null : (q.id || String(idx)));
+                                    }}
+                                    title="Copy full SQL"
+                                    style={{
+                                      display: 'inline-flex', alignItems: 'center', gap: '3px',
+                                      padding: '2px 7px', borderRadius: '4px', border: '1px solid var(--border-color)',
+                                      background: 'none', color: 'var(--text-secondary)', fontSize: '10px', cursor: 'pointer'
+                                    }}
+                                  >
+                                    <Copy size={10} /> Copy
+                                  </button>
+                                </td>
+                              </tr>
+                              {expanded && (
+                                <tr style={{ backgroundColor: 'var(--bg-main)', borderBottom: '1px solid var(--border-color)' }}>
+                                  <td colSpan={5} style={{ padding: '10px 14px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginBottom: '6px', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                                      <span>
+                                        {dt ? dt.toLocaleString() : '—'} · thread {q.thread_id ?? '—'}
+                                        {q.database ? ` · ${q.database}` : ''}
+                                        {q.duration_us ? ` · ${(q.duration_us / 1000).toFixed(2)} ms` : ''}
+                                      </span>
+                                      <button
+                                        onClick={() => navigator.clipboard?.writeText(sql)}
+                                        style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: '11px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                      >
+                                        <Copy size={11} /> Copy full query
+                                      </button>
+                                    </div>
+                                    <pre style={{
+                                      margin: 0, padding: '10px', borderRadius: '4px', backgroundColor: 'var(--bg-card)',
+                                      border: '1px solid var(--border-color)', fontFamily: 'monospace', fontSize: '11px',
+                                      whiteSpace: 'pre-wrap', wordBreak: 'break-word', color: 'var(--text-primary)'
+                                    }}>{sql}</pre>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          );
+                        })
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 

@@ -6,10 +6,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
 	"brixel/php-debug-studio/daemon/pkg/api"
 	"brixel/php-debug-studio/daemon/pkg/dbgp"
+	"brixel/php-debug-studio/daemon/pkg/dbwatch"
 	"brixel/php-debug-studio/daemon/pkg/executor"
 	"brixel/php-debug-studio/daemon/pkg/mock"
 	"brixel/php-debug-studio/daemon/pkg/store"
@@ -33,6 +36,27 @@ func main() {
 	hub := ws.NewHub()
 	go hub.Run()
 
+	// Live application SQL capture. The watcher finds the project's MySQL
+	// container, enables its general query log and streams every statement
+	// over the WebSocket as a "sql_query" event.
+	sqlWatcher := dbwatch.New(dbwatch.Options{
+		OnQuery: func(q dbwatch.Query) {
+			hub.Broadcast("sql_query", q.ProjectID, q)
+		},
+		OnLog: log.Printf,
+	})
+	if projects, err := st.ListProjects(); err == nil && len(projects) > 0 {
+		p := projects[0]
+		sqlWatcher.SetProject(p.ID, p.Name, p.RootPath)
+		go func() {
+			time.Sleep(2 * time.Second)
+			if err := sqlWatcher.Start(); err != nil {
+				log.Printf("Live SQL capture unavailable: %v", err)
+			}
+		}()
+		defer sqlWatcher.Stop()
+	}
+
 	execEngine := executor.NewEngine()
 
 	// Initialize DBGp Xdebug bridge
@@ -51,6 +75,40 @@ func main() {
 			"event":      event,
 			"state":      session.State,
 		})
+	})
+
+	// Inject stored breakpoints into Xdebug when a session connects.
+	// The resolver matches the session's file URI against saved breakpoints.
+	dbgpListener.SetBreakpointResolver(func(fileURI string) []dbgp.BreakpointInfo {
+		var result []dbgp.BreakpointInfo
+		projects, err := st.ListProjects()
+		if err != nil {
+			return result
+		}
+		for _, p := range projects {
+			bps, err := st.ListBreakpoints(p.ID)
+			if err != nil {
+				continue
+			}
+			for _, bp := range bps {
+				if !bp.Enabled {
+					continue
+				}
+				// Match exact file URI, or a prefix match (e.g. session at
+				// file:///var/www/html/index.php matches breakpoint on that file).
+				if bp.FileURI == fileURI ||
+					strings.HasPrefix(fileURI, bp.FileURI) ||
+					strings.HasPrefix(bp.FileURI, fileURI) {
+					result = append(result, dbgp.BreakpointInfo{
+						ID:         bp.ID,
+						FileURI:    bp.FileURI,
+						LineNumber: bp.LineNumber,
+						Type:       bp.Type,
+					})
+				}
+			}
+		}
+		return result
 	})
 
 	// Initialize TraceManager for auto-step line tracing
@@ -76,6 +134,7 @@ func main() {
 
 	mockEngine := mock.NewMockServer()
 	server := api.NewServer(st, hub, execEngine, dbgpListener, mockEngine)
+	server.SetDBWatcher(sqlWatcher)
 
 	port := os.Getenv("DEBUG_STUDIO_PORT")
 	if port == "" {

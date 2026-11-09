@@ -66,12 +66,26 @@ export const XdebugStudioView: React.FC<XdebugStudioViewProps> = ({
   const [actionLoading, setActionLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
+  // Automatic Xdebug configuration
+  const [xdebugStatus, setXdebugStatus] = useState<any>(null);
+  const [xdebugBusy, setXdebugBusy] = useState(false);
+  const [xdebugLoading, setXdebugLoading] = useState(true);
+  const [xdebugSteps, setXdebugSteps] = useState<any[]>([]);
+  const [xdebugError, setXdebugError] = useState('');
+  const [autoRun, setAutoRun] = useState(true);
+  const autoConfiguredRef = useRef<Set<string>>(new Set());
+
   // Breakpoints
   const [breakpoints, setBreakpoints] = useState<any[]>([]);
   const [showAddBpForm, setShowAddBpForm] = useState(false);
   const [newBpFile, setNewBpFile] = useState('/var/www/html/app/Http/Controllers/UserController.php');
   const [newBpLine, setNewBpLine] = useState(25);
   const [newBpCondition, setNewBpCondition] = useState('');
+
+  // Auto-detected breakpoints
+  const [autoBps, setAutoBps] = useState<any[]>([]);
+  const [autoBPLoading, setAutoBPLoading] = useState(false);
+  const [autoBPError, setAutoBPError] = useState('');
 
   // Selected frame for highlighting
   const [selectedFrameIdx, setSelectedFrameIdx] = useState(0);
@@ -112,10 +126,101 @@ export const XdebugStudioView: React.FC<XdebugStudioViewProps> = ({
       .catch(() => setBreakpoints([]));
   }, [selectedProjectId]);
 
+  const autoDetectBreakpoints = useCallback(async () => {
+    setAutoBPLoading(true);
+    setAutoBPError('');
+    try {
+      const data = await api.autoDetectBreakpoints(selectedProjectId);
+      const saved = data?.saved || [];
+      setAutoBps(saved);
+      setBreakpoints([...(breakpoints || []), ...saved]);
+    } catch (err: any) {
+      setAutoBPError(err.message);
+    } finally {
+      setAutoBPLoading(false);
+    }
+  }, [selectedProjectId, breakpoints]);
+
+  const loadXdebugStatus = useCallback(async () => {
+    setXdebugLoading(true);
+    try {
+      const data = await api.getXdebugStatus(selectedProjectId);
+      setXdebugStatus(data);
+      setAutoRun(!!data?.auto_run);
+      setXdebugError('');
+    } catch (err: any) {
+      setXdebugError(err.message);
+    } finally {
+      setXdebugLoading(false);
+    }
+  }, [selectedProjectId]);
+
+  const runAutoConfigure = useCallback(async (silent = false) => {
+    setXdebugBusy(true);
+    setXdebugLoading(true);
+    setXdebugError('');
+    try {
+      const data = await api.configureXdebug(selectedProjectId);
+      setXdebugStatus(data);
+      setAutoRun(!!data?.auto_run);
+      setXdebugSteps(data?.report?.steps || []);
+    } catch (err: any) {
+      setXdebugError(err.message);
+      if (!silent) alert(`Automatic Xdebug configuration failed: ${err.message}`);
+    } finally {
+      setXdebugBusy(false);
+      setXdebugLoading(false);
+    }
+  }, [selectedProjectId]);
+
+  const toggleAutoRun = useCallback(async (enabled: boolean) => {
+    const previous = autoRun;
+    setAutoRun(enabled);
+    try {
+      await api.setAutoRun(enabled);
+    } catch (err: any) {
+      setAutoRun(previous);
+      setXdebugError(err.message);
+    }
+  }, [autoRun]);
+
   useEffect(() => {
     loadSessions();
     loadBreakpoints();
   }, [selectedProjectId]);
+
+  // Detect the project's PHP runtime on mount and, when Xdebug is missing,
+  // configure it automatically once per project/session.
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await api.getXdebugStatus(selectedProjectId);
+        if (cancelled) return;
+        setXdebugStatus(data);
+        setAutoRun(!!data?.auto_run);
+        setXdebugLoading(false);
+        if (!data?.report?.success && !autoConfiguredRef.current.has(selectedProjectId)) {
+          autoConfiguredRef.current.add(selectedProjectId);
+          await runAutoConfigure(true);
+          // After auto-configuration, detect breakpoints automatically.
+          if (data?.report?.success) {
+            await autoDetectBreakpoints();
+          }
+        } else if (data?.report?.success) {
+          // Xdebug already configured: detect breakpoints once.
+          await autoDetectBreakpoints();
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setXdebugError(err.message);
+          setXdebugLoading(false);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedProjectId, runAutoConfigure]);
 
   // Auto-refresh polling
   useEffect(() => {
@@ -256,6 +361,13 @@ export const XdebugStudioView: React.FC<XdebugStudioViewProps> = ({
   const currentLine = currentSession?.line || 0;
   const sessionState = currentSession?.state || 'stopped';
   const stateStyle = stateColors[sessionState] || stateColors.stopped;
+
+  const xdebugReport = xdebugStatus?.report;
+  const xdebugRuntimes: any[] = xdebugReport?.runtimes || [];
+  const xdebugConfigured = !!xdebugReport?.success;
+  const xdebugHost: string = xdebugStatus?.dbgp?.host || '127.0.0.1';
+  const xdebugPort: string = xdebugStatus?.dbgp?.port || '9003';
+  const xdebugListener = `${xdebugHost}:${xdebugPort}`;
 
   const basename = (path: string) => {
     const parts = path.replace(/\\/g, '/').split('/');
@@ -459,51 +571,222 @@ export const XdebugStudioView: React.FC<XdebugStudioViewProps> = ({
           backgroundColor: 'var(--bg-main)',
         }}>
           <div style={{
-            maxWidth: '560px', padding: '40px',
+            width: '100%', maxWidth: '760px', maxHeight: '100%', overflowY: 'auto',
+            padding: '28px 32px',
             backgroundColor: 'var(--bg-card)', borderRadius: '12px',
-            border: '1px solid var(--border-color)', textAlign: 'center',
+            border: '1px solid var(--border-color)',
           }}>
-            <div style={{ fontSize: '48px', marginBottom: '12px' }}>🐞</div>
-            <h2 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '6px' }}>
-              Xdebug Step Debugger
-            </h2>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '24px' }}>
-              Waiting for DBGp connection on <code style={{ color: '#58a6ff' }}>127.0.0.1:9003</code>…
-            </p>
-
-            <div style={{
-              textAlign: 'left', padding: '16px 20px',
-              backgroundColor: 'var(--bg-panel)', borderRadius: '8px',
-              border: '1px solid var(--border-color)', fontFamily: MONO_FONT, fontSize: '12px',
-              lineHeight: '1.7', color: 'var(--text-primary)',
-            }}>
-              <div style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontFamily: 'inherit', fontSize: '11px', fontWeight: 600 }}>
-                ; php.ini — Add these lines:
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ fontSize: '34px' }}>🐞</div>
+                <div>
+                  <h2 style={{ fontSize: '19px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
+                    Xdebug Step Debugger
+                  </h2>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>
+                    Listening on <code style={{ color: '#58a6ff' }}>{xdebugListener}</code> · project: {activeProject?.name || selectedProjectId || '—'}
+                  </p>
+                </div>
               </div>
-              <div><span style={{ color: '#d29922' }}>[xdebug]</span></div>
-              <div>xdebug.mode = <span style={{ color: '#3fb950' }}>debug</span></div>
-              <div>xdebug.client_host = <span style={{ color: '#3fb950' }}>127.0.0.1</span></div>
-              <div>xdebug.client_port = <span style={{ color: '#3fb950' }}>9003</span></div>
-              <div>xdebug.start_with_request = <span style={{ color: '#3fb950' }}>yes</span></div>
-              <div>xdebug.idekey = <span style={{ color: '#3fb950' }}>PHPSTORM</span></div>
+              <span style={{
+                padding: '4px 10px', borderRadius: '999px', fontSize: '11px', fontWeight: 700,
+                backgroundColor: (xdebugBusy || xdebugLoading) ? 'rgba(88,166,255,0.15)' : xdebugConfigured ? 'rgba(63,185,80,0.15)' : 'rgba(210,153,34,0.15)',
+                color: (xdebugBusy || xdebugLoading) ? '#58a6ff' : xdebugConfigured ? '#3fb950' : '#d29922',
+                border: `1px solid ${(xdebugBusy || xdebugLoading) ? 'rgba(88,166,255,0.4)' : xdebugConfigured ? 'rgba(63,185,80,0.4)' : 'rgba(210,153,34,0.4)'}`,
+                whiteSpace: 'nowrap',
+              }}>
+                {xdebugLoading && !xdebugBusy ? '⚙ DETECTING…' : xdebugBusy ? '⚙ CONFIGURING…' : xdebugConfigured ? '✓ XDEBUG READY' : '⚠ SETUP REQUIRED'}
+              </span>
             </div>
 
-            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '20px' }}>
-              Then trigger any HTTP request to your PHP application.<br />
-              The session will appear here automatically.
+            {/* Detected runtimes */}
+            <div style={{ marginTop: '20px' }}>
+              <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                Detected PHP runtimes
+              </div>
+
+              {xdebugRuntimes.length === 0 ? (
+                <div style={{ padding: '14px', borderRadius: '8px', border: '1px dashed var(--border-color)', color: 'var(--text-secondary)', fontSize: '12px' }}>
+                  {xdebugLoading
+                    ? 'Detecting the project’s PHP runtime… this can take a few seconds the first time.'
+                    : xdebugError
+                      ? `Detection failed: ${xdebugError}`
+                      : 'No PHP runtime detected yet. Is the project container running?'}
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {xdebugRuntimes.map((rt: any, idx: number) => (
+                    <div key={idx} style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap',
+                      padding: '10px 12px', borderRadius: '8px', backgroundColor: 'var(--bg-panel)',
+                      border: '1px solid var(--border-color)',
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                        <span style={{ fontSize: '15px' }}>{rt.kind === 'docker' ? '🐳' : '💻'}</span>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)', fontFamily: MONO_FONT }}>
+                            {rt.container || 'Host PHP'}
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                            PHP {rt.php_version || '?'}{rt.image ? ` · ${rt.image}` : ''}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                        <span style={{
+                          fontSize: '10px', fontWeight: 700, padding: '2px 7px', borderRadius: '4px',
+                          backgroundColor: rt.xdebug_installed ? 'rgba(63,185,80,0.15)' : 'rgba(248,81,73,0.15)',
+                          color: rt.xdebug_installed ? '#3fb950' : '#f85149',
+                        }}>
+                          {rt.xdebug_installed ? `Xdebug ${rt.xdebug_version || ''}` : 'Xdebug missing'}
+                        </span>
+                        {rt.xdebug_installed && (
+                          <span style={{ fontSize: '10px', fontWeight: 600, padding: '2px 7px', borderRadius: '4px', backgroundColor: 'var(--bg-card)', color: 'var(--text-secondary)', fontFamily: MONO_FONT }}>
+                            {rt.mode || '—'} · {rt.client_host || '?'}:{rt.client_port || '?'}
+                          </span>
+                        )}
+                        {rt.xdebug_installed && (
+                          <span style={{ fontSize: '10px', fontWeight: 700, color: rt.reachable ? '#3fb950' : '#d29922' }}>
+                            {rt.reachable ? '● reachable' : '● unreachable'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '18px', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => runAutoConfigure(false)}
+                disabled={xdebugBusy || xdebugLoading}
+                style={{
+                  ...btnBase, padding: '8px 16px',
+                  backgroundColor: 'var(--accent)', color: '#fff', borderColor: 'var(--accent)',
+                  opacity: xdebugBusy ? 0.6 : 1,
+                }}
+              >
+                {xdebugBusy ? '⚙ Configuring Xdebug…' : xdebugConfigured ? '🔄 Re-run auto-configuration' : '⚡ Auto-configure Xdebug'}
+              </button>
+              <button
+                onClick={loadXdebugStatus}
+                disabled={xdebugBusy || xdebugLoading}
+                style={{ ...btnBase, padding: '8px 14px', backgroundColor: 'var(--bg-panel)', color: 'var(--text-primary)' }}
+              >
+                Re-check
+              </button>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--text-secondary)', cursor: 'pointer', marginLeft: 'auto' }}>
+                <input type="checkbox" checked={autoRun} onChange={(e) => toggleAutoRun(e.target.checked)} style={{ accentColor: '#58a6ff' }} />
+                Auto-resume each session (no breakpoint needed)
+              </label>
+            </div>
+
+            {/* Auto-detected breakpoints */}
+            <div style={{ marginTop: '18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', marginBottom: '8px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>
+                  Auto breakpoints
+                </div>
+                <button
+                  onClick={autoDetectBreakpoints}
+                  disabled={autoBPLoading || xdebugBusy || xdebugLoading}
+                  style={{
+                    padding: '4px 10px', borderRadius: '4px', border: '1px solid var(--accent)',
+                    backgroundColor: 'transparent', color: 'var(--accent)', fontSize: '11px',
+                    fontWeight: 600, cursor: autoBPLoading ? 'wait' : 'pointer', opacity: autoBPLoading ? 0.6 : 1
+                  }}
+                >
+                  {autoBPLoading ? 'Detecting…' : '🎯 Auto-detect breakpoints'}
+                </button>
+              </div>
+              {autoBPError && (
+                <div style={{ marginBottom: '8px', padding: '6px 10px', borderRadius: '4px', backgroundColor: 'rgba(248,81,73,0.1)', border: '1px solid rgba(248,81,73,0.3)', color: '#f85149', fontSize: '11px' }}>
+                  {autoBPError}
+                </div>
+              )}
+              {autoBps.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {autoBps.map((bp: any, idx: number) => (
+                    <div key={idx} style={{
+                      display: 'flex', alignItems: 'center', gap: '8px',
+                      padding: '6px 10px', borderRadius: '6px',
+                      backgroundColor: 'var(--bg-panel)', border: '1px solid var(--border-color)',
+                      fontFamily: MONO_FONT, fontSize: '11px',
+                    }}>
+                      <span style={{ fontSize: '14px' }}>🔴</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {bp.file_uri}
+                        </div>
+                        <div style={{ color: 'var(--text-secondary)', fontSize: '10px' }}>
+                          line {bp.line_number} · {bp.reason || 'line breakpoint'}
+                        </div>
+                      </div>
+                      <span style={{ color: '#3fb950', fontWeight: 700 }}>ACTIVE</span>
+                    </div>
+                  ))}
+                  <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '6px', marginBottom: 0 }}>
+                    Breakpoints are active — the debugger will stop on the next request to the project.
+                  </p>
+                </div>
+              ) : (
+                <div style={{ padding: '10px 14px', borderRadius: '6px', backgroundColor: 'var(--bg-panel)', border: '1px dashed var(--border-color)', color: 'var(--text-secondary)', fontSize: '12px' }}>
+                  No auto breakpoints yet. Click "Auto-detect breakpoints" to find Laravel entry points and routes.
+                </div>
+              )}
+            </div>
+
+            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '14px', marginBottom: 0 }}>
+              {xdebugConfigured
+                ? 'Xdebug is configured. Trigger any HTTP request to the project and the session appears here automatically.'
+                : xdebugReport?.message || 'Checking the project environment…'}
             </p>
 
-            <div style={{
-              marginTop: '20px', display: 'flex', justifyContent: 'center', gap: '24px',
-              fontSize: '11px', color: 'var(--text-secondary)',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <span style={{ color: '#d29922' }}>●</span> Breakpoints: {breakpoints.length}
+            {/* Configuration log */}
+            {xdebugSteps.length > 0 && (
+              <details style={{ marginTop: '14px' }}>
+                <summary style={{ cursor: 'pointer', fontSize: '11px', fontWeight: 700, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Configuration log ({xdebugSteps.filter((s: any) => s.ok).length}/{xdebugSteps.length} steps ok)
+                </summary>
+                <div style={{
+                  marginTop: '8px', maxHeight: '220px', overflow: 'auto', padding: '10px 12px',
+                  backgroundColor: 'var(--bg-panel)', borderRadius: '8px', border: '1px solid var(--border-color)',
+                  fontFamily: MONO_FONT, fontSize: '11px', lineHeight: '1.6',
+                }}>
+                  {xdebugSteps.map((step: any, idx: number) => (
+                    <div key={idx} style={{ color: step.ok ? '#3fb950' : '#f85149', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                      {step.ok ? '✓' : '✗'} {step.name}{step.output ? ` — ${step.output}` : ''}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+
+            {xdebugError && (
+              <div style={{ marginTop: '12px', padding: '8px 12px', borderRadius: '6px', backgroundColor: 'rgba(248,81,73,0.12)', border: '1px solid rgba(248,81,73,0.4)', color: '#f85149', fontSize: '12px' }}>
+                {xdebugError}
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <span style={{ color: '#58a6ff' }}>●</span> Project: {activeProject?.name || selectedProjectId || '—'}
+            )}
+
+            <details style={{ marginTop: '16px' }}>
+              <summary style={{ cursor: 'pointer', fontSize: '11px', color: 'var(--text-secondary)' }}>Manual php.ini fallback</summary>
+              <div style={{
+                marginTop: '8px', padding: '12px 14px',
+                backgroundColor: 'var(--bg-panel)', borderRadius: '8px',
+                border: '1px solid var(--border-color)', fontFamily: MONO_FONT, fontSize: '11px',
+                lineHeight: '1.7', color: 'var(--text-primary)',
+              }}>
+                <div><span style={{ color: '#d29922' }}>[xdebug]</span></div>
+                <div>zend_extension=<span style={{ color: '#3fb950' }}>xdebug.so</span></div>
+                <div>xdebug.mode = <span style={{ color: '#3fb950' }}>debug</span></div>
+                <div>xdebug.client_host = <span style={{ color: '#3fb950' }}>{xdebugRuntimes.find((r: any) => r.client_host)?.client_host || '127.0.0.1'}</span></div>
+                <div>xdebug.client_port = <span style={{ color: '#3fb950' }}>{xdebugPort}</span></div>
+                <div>xdebug.start_with_request = <span style={{ color: '#3fb950' }}>yes</span></div>
+                <div>xdebug.idekey = <span style={{ color: '#3fb950' }}>PHP_DEBUG_STUDIO</span></div>
               </div>
-            </div>
+            </details>
           </div>
         </div>
       ) : (

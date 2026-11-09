@@ -25,6 +25,18 @@ export const api = {
   getTraces: (projectId?: string) => request<any[]>(`/traces${projectId ? `?project_id=${projectId}` : ''}`),
   getTraceDetail: (traceId: string) => request<any>(`/traces/${traceId}`),
   getDebugSessions: () => request<any[]>('/debug/sessions'),
+  getXdebugStatus: (projectId?: string) =>
+    request<any>(`/debug/xdebug/status${projectId ? `?project_id=${projectId}` : ''}`),
+  configureXdebug: (projectId?: string) =>
+    request<any>('/debug/xdebug/configure', { method: 'POST', body: JSON.stringify({ project_id: projectId || '' }) }),
+  getAutoRun: () => request<{ enabled: boolean }>('/debug/autorun'),
+  setAutoRun: (enabled: boolean) =>
+    request<{ enabled: boolean }>('/debug/autorun', { method: 'POST', body: JSON.stringify({ enabled }) }),
+  autoDetectBreakpoints: (projectId?: string) =>
+    request<any>('/debug/breakpoints/auto-detect', {
+      method: 'POST',
+      body: JSON.stringify({ project_id: projectId || '' }),
+    }),
   getPhpRuntimes: () => request<Array<{ version: string; binary_path: string; is_default: boolean }>>('/runtimes/php'),
   updateProjectPhp: (projectId: string, phpVersion: string, phpBinaryPath?: string) =>
     request<any>(`/projects/${projectId}/php`, {
@@ -99,6 +111,12 @@ export const api = {
     request<any>('/jsdebug/events', { method: 'POST', body: JSON.stringify(data) }),
   getDBConnections: (projectId?: string) =>
     request<any[]>(`/db/connections${projectId ? `?project_id=${projectId}` : ''}`),
+  getLiveSQLStatus: (projectId?: string) =>
+    request<any>(`/db/live/status${projectId ? `?project_id=${projectId}` : ''}`),
+  getLiveSQLQueries: (limit = 200) => request<any[]>(`/db/live/queries?limit=${limit}`),
+  startLiveSQL: (projectId?: string) =>
+    request<any>('/db/live/start', { method: 'POST', body: JSON.stringify({ project_id: projectId || '' }) }),
+  stopLiveSQL: () => request<any>('/db/live/stop', { method: 'POST', body: JSON.stringify({}) }),
   createDBConnection: (data: { project_id: string; name: string; driver: string; config_json?: string; readonly?: boolean }) =>
     request<any>('/db/connections', { method: 'POST', body: JSON.stringify(data) }),
   deleteDBConnection: (id: string) =>

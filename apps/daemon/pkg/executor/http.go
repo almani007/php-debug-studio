@@ -3,9 +3,12 @@ package executor
 import (
 	"bytes"
 	"crypto/tls"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptrace"
+	"net/url"
 	"strings"
 	"time"
 
@@ -72,12 +75,28 @@ func (e *Engine) Execute(req ExecutionRequest) *ExecutionResponse {
 		timeout = time.Duration(req.TimeoutMs) * time.Millisecond
 	}
 
-	var bodyReader io.Reader
-	if req.Body != "" {
-		bodyReader = bytes.NewBufferString(req.Body)
+	// Parse and validate URL - prevent SSRF by restricting to http/https schemes
+	u, err := url.Parse(req.URL)
+	if err != nil {
+		return &ExecutionResponse{
+			RunID:      runID,
+			StatusCode: 0,
+			Error:      fmt.Sprintf("invalid URL: %v", err),
+		}
+	}
+	// Only allow http and https schemes
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		// Valid scheme - allow all hosts (operator can configure firewall)
+	default:
+		return &ExecutionResponse{
+			RunID:      runID,
+			StatusCode: 0,
+			Error:      fmt.Sprintf("URL scheme not allowed: %s (only http/https)", u.Scheme),
+		}
 	}
 
-	httpReq, err := http.NewRequest(strings.ToUpper(req.Method), req.URL, bodyReader)
+	httpReq, err := http.NewRequest(strings.ToUpper(req.Method), req.URL, bytes.NewBufferString(req.Body))
 	if err != nil {
 		return &ExecutionResponse{
 			RunID:      runID,
@@ -118,11 +137,12 @@ func (e *Engine) Execute(req ExecutionRequest) *ExecutionResponse {
 				timings.TLSHandshakeMs = time.Since(tlsStart).Milliseconds()
 			}
 		},
-		GotFirstResponseByte: func() {
-			if !ttfbStart.IsZero() {
-				timings.TTFBMs = time.Since(ttfbStart).Milliseconds()
-			}
-		},
+
+	GotFirstResponseByte: func() {
+		if !ttfbStart.IsZero() {
+			timings.TTFBMs = time.Since(ttfbStart).Milliseconds()
+		}
+	},
 	}
 
 	httpReq = httpReq.WithContext(httptrace.WithClientTrace(httpReq.Context(), trace))
@@ -150,10 +170,18 @@ func (e *Engine) Execute(req ExecutionRequest) *ExecutionResponse {
 	defer resp.Body.Close()
 
 	// Bound response body read (max 5MB preview in memory)
-	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 5*1024*1024))
+	bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 5*1024*1024))
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		// Body truncated due to 5MB limit; continue with what we read
+	}
 
 	respHeaders := make(map[string]string)
 	for k, v := range resp.Header {
+		// Filter out sensitive headers that should not be exposed
+		switch strings.ToLower(k) {
+		case "set-cookie", "www-authenticate", "authorization", "proxy-authenticate":
+			continue
+		}
 		respHeaders[k] = strings.Join(v, ", ")
 	}
 

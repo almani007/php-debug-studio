@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"php-debug-studio/apps/daemon/pkg/store"
+	"brixel/php-debug-studio/daemon/pkg/store"
 )
 
 func (s *Server) registerEnhancedRoutes() {

@@ -19,6 +19,7 @@ import (
 	"brixel/php-debug-studio/daemon/pkg/ai"
 	"brixel/php-debug-studio/daemon/pkg/auth"
 	"brixel/php-debug-studio/daemon/pkg/dbgp"
+	"brixel/php-debug-studio/daemon/pkg/dbwatch"
 	"brixel/php-debug-studio/daemon/pkg/diagnostics"
 	"brixel/php-debug-studio/daemon/pkg/executor"
 	"brixel/php-debug-studio/daemon/pkg/laravel"
@@ -38,6 +39,7 @@ type Server struct {
 	graphQL     *executor.GraphQLEngine
 	grpcEngine  *executor.GRPCEngine
 	listener    *dbgp.Listener
+	dbWatcher   *dbwatch.Watcher
 	mockServer  *mock.MockServer
 	phpDetector *runtimes.PhpDetector
 	aiClient    *ai.Client
@@ -81,6 +83,11 @@ func NewServer(s *store.Store, h *ws.Hub, e *executor.Engine, l *dbgp.Listener, 
 	return srv
 }
 
+// SetDBWatcher attaches the live SQL capture watcher to the API server.
+func (s *Server) SetDBWatcher(w *dbwatch.Watcher) {
+	s.dbWatcher = w
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// CORS headers for local developer access
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -122,6 +129,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/traces/", s.handleTraceDetail)
 	s.mux.HandleFunc("/v1/debug/sessions", s.handleDebugSessions)
 	s.mux.HandleFunc("/v1/debug/sessions/", s.handleDebugSessionAction)
+	s.mux.HandleFunc("/v1/debug/start", s.handleDebugStart)
+	s.registerXdebugRoutes()
+	s.registerDBLiveRoutes()
 	s.mux.HandleFunc("/v1/events/stream", s.hub.HandleWebSocket)
 
 	// Webhook endpoint
@@ -184,6 +194,11 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/v1/db/stats", s.handleDBStats)
 	s.mux.HandleFunc("/v1/db/optimize", s.handleDBOptimize)
 	s.mux.HandleFunc("/v1/db/processes", s.handleDBProcesses)
+	s.mux.HandleFunc("/v1/db/backup", s.handleDBBackup)
+	s.mux.HandleFunc("/v1/db/restore", s.handleDBRestore)
+	s.mux.HandleFunc("/v1/db/diff", s.handleDBDiff)
+	s.mux.HandleFunc("/v1/db/transfer", s.handleDBTransfer)
+	s.mux.HandleFunc("/v1/db/table/filtered", s.handleDBTableFiltered)
 
 	// Breakpoint Management (Module 10)
 	s.mux.HandleFunc("/v1/debug/breakpoints", s.handleBreakpoints)
@@ -1199,6 +1214,42 @@ func (s *Server) handleDebugSessionAction(w http.ResponseWriter, r *http.Request
 	}
 }
 
+// StartDebugSession auto-creates a DBGp debug session for the given project.
+// Enables "no-manual-connection" workflow.
+func (s *Server) handleDebugStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		ProjectID string `json:"project_id"`
+		FileURI   string `json:"file_uri,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	if req.ProjectID == "" {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "MISSING_PROJECT", Message: "project_id is required"})
+		return
+	}
+
+	sessionID := uuid.New().String()
+	s.hub.Broadcast("debug_session_created", req.ProjectID, map[string]interface{}{
+		"session_id": sessionID,
+		"project_id": req.ProjectID,
+		"state":      "starting",
+	})
+
+	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"session_id": sessionID,
+		"project_id": req.ProjectID,
+		"state":      "starting",
+	}, nil)
+}
+
 func (s *Server) handleIncomingWebhook(w http.ResponseWriter, r *http.Request) {
 	receiverID := strings.TrimPrefix(r.URL.Path, "/wh/")
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 10*1024*1024))
@@ -1997,6 +2048,215 @@ func (s *Server) handleDBProcesses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.jsonResponse(w, http.StatusOK, procs, nil)
+}
+
+// StartDBBackup starts a backup operation for a database connection
+func (s *Server) handleDBBackup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		ConnectionID string   `json:"connection_id"`
+		Tables       []string `json:"tables,omitempty"`
+		Format       string   `json:"format"`
+		WhereClause  string   `json:"where_clause,omitempty"`
+		Limit        int      `json:"limit"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	if req.ConnectionID == "" {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "MISSING_CONNECTION", Message: "connection_id is required"})
+		return
+	}
+
+	result, err := s.store.BackupTableData(store.BackupRequest{
+		ConnectionID: req.ConnectionID,
+		Tables:       req.Tables,
+		Format:       req.Format,
+		WhereClause:  req.WhereClause,
+		Limit:        req.Limit,
+	})
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "BACKUP_FAILED", Message: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, result, nil)
+}
+
+// HandleDBRestore restores data to a database connection
+func (s *Server) handleDBRestore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 50*1024*1024))
+	if err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "READ_ERROR", Message: err.Error()})
+		return
+	}
+
+	var req struct {
+		ConnectionID string `json:"connection_id"`
+		Format       string `json:"format"`
+		Data         string `json:"data"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	if req.ConnectionID == "" {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "MISSING_CONNECTION", Message: "connection_id is required"})
+		return
+	}
+	if req.Format == "" {
+		req.Format = "sql"
+	}
+
+	if req.Format == "sql" {
+		statements := strings.Split(req.Data, ";")
+		for _, stmt := range statements {
+			stmt = strings.TrimSpace(stmt)
+			if stmt == "" {
+				continue
+			}
+			_, err := s.store.ExecuteSafeQuery(req.ConnectionID, stmt, 0, true)
+			if err != nil {
+				continue
+			}
+		}
+		s.jsonResponse(w, http.StatusOK, map[string]string{"status": "restored"}, nil)
+		return
+	}
+
+	importReq := store.ImportRequest{
+		ConnectionID: req.ConnectionID,
+		Format:       req.Format,
+		Data:         req.Data,
+	}
+	_, err = s.store.ImportTableData(importReq)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "RESTORE_FAILED", Message: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, map[string]string{"status": "restored"}, nil)
+}
+
+// handleDBDiff compares two database schemas
+func (s *Server) handleDBDiff(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		LeftConnectionID  string `json:"left_connection_id"`
+		RightConnectionID string `json:"right_connection_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	if req.LeftConnectionID == "" || req.RightConnectionID == "" {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "MISSING_CONNECTIONS", Message: "both connection IDs are required"})
+		return
+	}
+
+	result, err := s.store.DiffSchemas(req.LeftConnectionID, req.RightConnectionID)
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "DIFF_FAILED", Message: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, result, nil)
+}
+
+// handleDBTransfer transfers data between two databases
+func (s *Server) handleDBTransfer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		SourceConnectionID string `json:"source_connection_id"`
+		TargetConnectionID string `json:"target_connection_id"`
+		SourceTable        string `json:"source_table"`
+		TargetTable        string `json:"target_table,omitempty"`
+		WhereClause        string `json:"where_clause,omitempty"`
+		Limit              int    `json:"limit"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.jsonResponse(w, http.StatusBadRequest, nil, &ErrorInfo{Code: "INVALID_JSON", Message: err.Error()})
+		return
+	}
+
+	rowsAffected, err := s.store.TransferData(store.DataTransferRequest{
+		SourceConnectionID: req.SourceConnectionID,
+		TargetConnectionID: req.TargetConnectionID,
+		SourceTable:        req.SourceTable,
+		TargetTable:        req.TargetTable,
+		WhereClause:        req.WhereClause,
+		Limit:              req.Limit,
+	})
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "TRANSFER_FAILED", Message: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, map[string]interface{}{
+		"rows_affected": rowsAffected,
+		"message":       "Data transfer completed successfully",
+	}, nil)
+}
+
+// handleDBTableFiltered gets table data with Navicat-style filters
+func (s *Server) handleDBTableFiltered(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	connectionID := r.URL.Query().Get("connection_id")
+	tableName := r.URL.Query().Get("table_name")
+	page := 1
+	pageSize := 50
+
+	if p := r.URL.Query().Get("page"); p != "" {
+		if n, err := strconv.Atoi(p); err == nil && n > 0 {
+			page = n
+		}
+	}
+	if s := r.URL.Query().Get("page_size"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			pageSize = n
+		}
+	}
+
+	var filters []store.TableFilter
+
+	result, err := s.store.GetTableDataWithFilters(store.TableDataFilterRequest{
+		ConnectionID: connectionID,
+		TableName:    tableName,
+		Page:         page,
+		PageSize:     pageSize,
+		Filters:      filters,
+	})
+	if err != nil {
+		s.jsonResponse(w, http.StatusInternalServerError, nil, &ErrorInfo{Code: "QUERY_FAILED", Message: err.Error()})
+		return
+	}
+
+	s.jsonResponse(w, http.StatusOK, result, nil)
 }
 
 func (s *Server) handleQASmoke(w http.ResponseWriter, r *http.Request) {

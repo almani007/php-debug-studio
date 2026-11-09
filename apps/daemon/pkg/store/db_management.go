@@ -490,11 +490,10 @@ func (s *Store) GetRealtimeMetrics(connectionID string) (*RealtimeMetricsResult,
 	// Try to get stats from the database
 	stats, err := s.GetDatabaseStats(connectionID)
 	if err == nil {
-		result.Uptime = stats.UptimeSeconds
-		result.ActiveConns = stats.ActiveConnections
-		result.SlowQueries = stats.SlowQueries
-		result.QPS = stats.QueriesPerSecond
-		result.CacheHitRate = stats.CacheHitRate
+		var uptime int64
+		_, _ = fmt.Sscanf(stats.Uptime, "%d", &uptime)
+		result.Uptime = uptime
+		result.ActiveConns = stats.OpenConns
 	}
 
 	// Get table sizes
@@ -503,10 +502,98 @@ func (s *Store) GetRealtimeMetrics(connectionID string) (*RealtimeMetricsResult,
 		for _, t := range schema.Tables {
 			result.TableSizes = append(result.TableSizes, TableSizeInfo{
 				Name:     t.Name,
-				RowCount: t.RowCount,
-				DataSize: t.DataSize,
+				RowCount: t.EstimatedRows,
 			})
 		}
+	}
+
+	return result, nil
+}
+
+// ExecuteReadOnlyQuery runs a read-only query with a row cap.
+func (s *Store) ExecuteReadOnlyQuery(connID, query string) (*QueryResult, error) {
+	return s.ExecuteSafeQuery(connID, query, 1000, false)
+}
+
+// GetDatabaseSchema returns the introspected schema for a connection.
+func (s *Store) GetDatabaseSchema(connID string) (*DatabaseSchemaInfo, error) {
+	return s.IntrospectSchema(connID)
+}
+
+// ImportTableData override to use ExecuteSafeQuery
+func (s *Store) ImportTableDataOverride(req ImportRequest) (*ImportResult, error) {
+	if req.ConnectionID == "" || req.Table == "" || req.Data == "" {
+		return nil, fmt.Errorf("connection_id, table, and data are required")
+	}
+
+	result := &ImportResult{
+		RowsImported: 0,
+		RowsFailed:   0,
+		Errors:       make([]string, 0),
+		ImportedAt:   time.Now(),
+	}
+
+	switch req.Format {
+	case "csv":
+		r := csv.NewReader(strings.NewReader(req.Data))
+		records, err := r.ReadAll()
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse CSV: %w", err)
+		}
+		if len(records) < 2 {
+			return result, nil
+		}
+		headers := records[0]
+		for i, row := range records[1:] {
+			vals := make([]string, len(headers))
+			for j := range headers {
+				if j < len(row) {
+					vals[j] = fmt.Sprintf("'%s'", strings.ReplaceAll(row[j], "'", "''"))
+				} else {
+					vals[j] = "NULL"
+				}
+			}
+			query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+				req.Table, strings.Join(headers, ", "), strings.Join(vals, ", "))
+			if _, err := s.ExecuteSafeQuery(req.ConnectionID, query, 1, true); err != nil {
+				result.RowsFailed++
+				result.Errors = append(result.Errors, fmt.Sprintf("row %d: %s", i+1, err.Error()))
+			} else {
+				result.RowsImported++
+			}
+		}
+
+	case "json":
+		var rows []map[string]interface{}
+		if err := json.Unmarshal([]byte(req.Data), &rows); err != nil {
+			return nil, fmt.Errorf("failed to parse JSON: %w", err)
+		}
+		for i, row := range rows {
+			cols := make([]string, 0)
+			vals := make([]string, 0)
+			for k, v := range row {
+				cols = append(cols, k)
+				switch tv := v.(type) {
+				case string:
+					vals = append(vals, fmt.Sprintf("'%s'", strings.ReplaceAll(tv, "'", "''")))
+				case nil:
+					vals = append(vals, "NULL")
+				default:
+					vals = append(vals, fmt.Sprintf("%v", tv))
+				}
+			}
+			query := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+				req.Table, strings.Join(cols, ", "), strings.Join(vals, ", "))
+			if _, err := s.ExecuteSafeQuery(req.ConnectionID, query, 1, true); err != nil {
+				result.RowsFailed++
+				result.Errors = append(result.Errors, fmt.Sprintf("row %d: %s", i+1, err.Error()))
+			} else {
+				result.RowsImported++
+			}
+		}
+
+	default:
+		return nil, fmt.Errorf("unsupported import format: %s", req.Format)
 	}
 
 	return result, nil
